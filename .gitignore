@@ -1,0 +1,49 @@
+# --- Python / uv ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+*.cover
+.hypothesis/
+
+# --- Secrets & local wiretap state ---
+.env
+.env.*
+!.env.example
+.wiretap/
+
+# --- UI (Vite / Node) ---
+ui/node_modules/
+ui/dist/
+node_modules/
+
+# Built dashboard assets are generated into the package; ignore local rebuild noise
+# if you ever copy them outside the package tree:
+*.tsbuildinfo
+
+# --- Editors / OS ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- Logs / misc ---
+*.log
+.cache/
+tmp/
+temp/
