@@ -40,10 +40,10 @@ def build_transport(target: AgentTarget) -> Transport:
         return RetellTransport()
 
     if platform == "bland":
-        # Primary: outbound phone (PSTN)
-        from wiretap.transport.bland import BlandTransport
-
-        return BlandTransport()
+        raise NotImplementedError(
+            "Bland live phone dial is deferred. "
+            "Use `wiretap import bland` for suite/IR only, then a live Vapi/Retell agent."
+        )
 
     if kind == TransportKind.TEXT:
         return TextEchoTransport()

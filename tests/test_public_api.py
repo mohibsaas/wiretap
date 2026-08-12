@@ -1,9 +1,10 @@
 """Public package API smoke tests."""
 
 from wiretap import (
-    Caller,
     SuiteConfig,
+    TestAgentOrchestrator,
     __version__,
+    build_orchestrator,
     load_suite,
     simulate_scenario,
 )
@@ -11,7 +12,8 @@ from wiretap import (
 
 def test_public_exports() -> None:
     assert __version__
-    assert Caller is not None
+    assert TestAgentOrchestrator is not None
+    assert callable(build_orchestrator)
     assert SuiteConfig is not None
     assert callable(load_suite)
     assert callable(simulate_scenario)

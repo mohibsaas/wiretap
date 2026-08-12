@@ -1,148 +1,126 @@
 # wiretap
 
-CLI-first **voice agent test simulator**. Dial your **live** agent with a Pipecat-orchestrated **test agent**, score the call (LiteLLM judge + rules), and keep everything local under `.wiretap/`.
+Test your **live** voice agent from the terminal.
 
-Voice is the default. Text Chat is an opt-in for CI / cheap dry-runs.
-
-**Design:** [docs/HLD.md](docs/HLD.md) · **Plan / status:** [PROJECT.md](PROJECT.md)
+Wiretap dials the agent you already deployed (Vapi, Retell, or a text stub) using a **test agent**. It scores the call with rules + an LLM judge, then saves results under `.wiretap/`.
 
 ```text
-Your live agent  ←── Vapi WS / Retell LiveKit / text ──→  Wiretap test agent
-                                                              │
-                                                      Pipecat Flows IR
-                                                      LiteLLM + STT/TTS
-                                                      Judge (fail-only tips)
+Your live agent  ←── Vapi / Retell / text ──→  Wiretap test agent
+                                                      │
+                                               Pipecat Flows (what to say)
+                                               LiteLLM (talk + judge)
+                                               Transport TTS/STT (voice)
 ```
+
+Design detail: [docs/HLD.md](docs/HLD.md) · Plan / status: [PROJECT.md](PROJECT.md)
 
 ---
 
-## Quick start
+## Install
+
+Python ≥3.11. Core deps include Pipecat, LiteLLM, and a local UI server.
 
 ```bash
 uv sync
-cp .env.example .env   # fill keys — never commit .env
+cp .env.example .env   # put API keys here — never commit .env
+```
 
+Optional extras: `retell` (LiveKit), `pyai` (default speech), `mcp`, `dev`.
+
+---
+
+## First run
+
+```bash
 uv run wiretap init
 uv run wiretap simulate --all --junit junit.xml --json report.json
 uv run wiretap report
 ```
 
-Python ≥3.11. Core deps include **Pipecat**, **LiteLLM**, FastAPI/uvicorn (local UI), and websockets (Vapi voice).
-
----
-
-## CLI
-
-```text
-wiretap
-├── init                 # starter suite → .wiretap/suites/
-├── import retell|vapi|bland
-├── suite list|show|path
-├── simulate             # one or many scenarios
-├── report
-├── export               # copy suite out for git/CI
-└── ui run               # local dashboard
-```
-
-Glossary: a **simulation** is one scenario run; a **batch** is a UI Start of 1..N simulations.
-
----
-
-## Local dashboard
+Or connect a platform agent:
 
 ```bash
-cd ui && npm install && npm run build && cd ..   # once / after UI changes
-uv run wiretap ui run                           # → http://127.0.0.1:8787
+export VAPI_API_KEY=...
+export OPENAI_API_KEY=...   # test-agent LLM + judge
+export PYAI_API_KEY=...     # default STT/TTS for voice
+
+uv run wiretap import vapi --assistant-id asst_xxx
+uv run wiretap simulate --suite vapi --all
 ```
 
-First-run **onboarding**:
-
-1. **Your Agent** — Retell / Vapi / custom (platform key + agent id)
-2. **Test Agent** — LLM (LiteLLM providers) + STT/TTS (PyAI first for speech) + keys
-3. **What To Test** — purpose, categories, generate suite
-
-Same `.wiretap/` data as the CLI. Secrets go to `.env` only (API returns booleans, never key values).
+Retell needs `uv sync --extra retell` and `RETELL_API_KEY`.
 
 ---
 
-## Live platforms
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `wiretap init` | Create a starter suite in `.wiretap/suites/` |
+| `wiretap import …` | Pull platform config and draft scenarios |
+| `wiretap suite …` | List / show / path suites |
+| `wiretap simulate` | Dial the live agent for one or all scenarios |
+| `wiretap report` | Summarize local simulation artifacts |
+| `wiretap export` | Copy a suite out for git/CI |
+| `wiretap ui run` | Local dashboard at http://127.0.0.1:8787 |
+
+**Simulation** = one scenario run. **Batch** = UI Start of 1..N simulations.
+
+Import fills config; it does **not** dial. Simulate dials.
+
+---
+
+## Local UI
+
+```bash
+cd ui && npm install && npm run build && cd ..
+uv run wiretap ui run
+```
+
+First-run onboarding: **Your Agent** → **Test Agent** (LLM + STT/TTS) → **What To Test**. Same `.wiretap/` data as the CLI. Secrets stay in `.env`; the API only returns whether keys are set.
+
+---
+
+## How the test agent works
+
+1. **Prompt** — persona + goal in the suite YAML  
+2. **Beats** — pin exact lines at certain turns  
+3. **Flows** — multi-step phases (`flow_phases`) as Pipecat `NodeConfig` IR  
+
+Utterances and the judge use **LiteLLM**. On a voice call, **TTS/STT run inside the transport** (factory adapters). Defaults: LLM **OpenAI**, speech **PyAI**.
+
+---
+
+## Platforms
 
 | Platform | Live dial | Notes |
 | --- | --- | --- |
-| **Vapi** | WebSocket PCM voice (default) | Text Chat if `transport: text` or `room_url: chat` |
-| **Retell** | LiveKit web-call | `uv sync --extra retell` |
-| **Custom** | Text stub | CI / dry-run |
-| **Bland** | Import only | Live phone dial deferred |
-| **Phone / SIP** | Deferred | — |
-
-```bash
-# Vapi
-export VAPI_API_KEY=...
-# Test agent speech + LLM (examples)
-export OPENAI_API_KEY=...
-export PYAI_API_KEY=...          # default STT/TTS
-uv run wiretap import vapi --assistant-id asst_xxx
-uv run wiretap simulate --suite vapi --all
-
-# Retell
-export RETELL_API_KEY=...
-uv sync --extra retell
-uv run wiretap import retell --agent-id agent_xxx
-uv run wiretap simulate --suite retell --all
-```
+| Vapi | WebSocket PCM (default) | Text Chat if `transport: text` or `room_url: chat` |
+| Retell | LiveKit | `uv sync --extra retell` |
+| Custom / stub | Text | CI / dry-run |
+| Bland | Import only | Live phone dial deferred |
+| Phone / SIP | — | Deferred |
 
 ---
 
-## Test agent stack
-
-| Piece | Role |
-| --- | --- |
-| **Pipecat Flows** | Orchestrator IR (`NodeConfig` nodes; prompt → beats → `flow_phases`) |
-| **LiteLLM** | Test-agent utterances + judge |
-| **STT** | PyAI, OpenAI, Deepgram, AssemblyAI, Gladia, Groq |
-| **TTS** | PyAI, OpenAI, Deepgram, Cartesia, ElevenLabs, LMNT, Rime, PlayHT |
-
-Defaults: **LLM OpenAI**, **STT/TTS PyAI** (PyAI is speech-only — not an LLM). Configure in onboarding or suite `speech:` / `models:`.
-
----
-
-## Layout
+## Files on disk
 
 ```text
-wiretap/
-├── src/wiretap/     # Python package (CLI, services, transports, UI static)
-├── ui/              # Vite React source → builds into src/wiretap/ui/static/
-├── docs/HLD.md
-├── tests/
-└── pyproject.toml
-
-.wiretap/            # created in your project cwd
-├── suites/
-├── simulations/
-├── graphs/
-└── onboard.json
-.env                 # secrets only
-```
-
----
-
-## MCP (optional)
-
-```bash
-uv sync --extra mcp
-uv run wiretap-mcp
+.wiretap/
+  suites/        # scenarios (source of truth)
+  simulations/   # pass/fail artifacts (local)
+  graphs/        # imported AgentGraph IR (data only)
+  onboard.json   # non-secret UI prefs
+.env             # secrets only
 ```
 
 ---
 
 ## Security
 
-- Secrets in **environment / `.env` only** (see `.env.example`)
-- Suite YAML holds agent ids + `token_env` **names**, never keys
-- Do not commit `.env`
-- Suggestions from the judge appear **on fail only**
-
----
+- Secrets in **`.env` / environment only** (see `.env.example`)
+- Suite YAML stores agent ids and `token_env` **names**, never key values
+- Judge suggestions appear **on fail only**
 
 ## License
 

@@ -3224,9 +3224,6 @@ dev = [
     { name = "respx" },
     { name = "ruff" },
 ]
-live = [
-    { name = "livekit" },
-]
 mcp = [
     { name = "mcp" },
 ]
@@ -3242,7 +3239,6 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "litellm", specifier = ">=1.50.0" },
-    { name = "livekit", marker = "extra == 'live'", specifier = ">=0.17.0" },
     { name = "livekit", marker = "extra == 'retell'", specifier = ">=0.17.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
     { name = "pipecat-ai", specifier = ">=1.5.0" },
@@ -3257,7 +3253,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
     { name = "websockets", specifier = ">=12.0" },
 ]
-provides-extras = ["pyai", "pipecat", "retell", "vapi", "live", "ui", "mcp", "dev"]
+provides-extras = ["pyai", "retell", "mcp", "dev"]
 
 [[package]]
 name = "yarl"

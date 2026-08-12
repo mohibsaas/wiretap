@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from wiretap.ir.agent_graph import AgentGraph
 from wiretap.models import (
@@ -67,7 +66,7 @@ def suite_from_prompt(
                 persona_id=persona.id,
                 max_turns=14,
                 success_criteria=(
-                    "Caller progresses through the agent's main flow; "
+                    "Test agent progresses through the agent's main flow; "
                     f"known nodes: {', '.join(graph.node_ids()[:8])}"
                 ),
                 rubric="Pass if the agent advances the conversation without dead-ending.",
@@ -104,11 +103,3 @@ def _guess_goal(prompt: str, agent_name: str) -> str:
 def slug(value: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower()).strip("_")
     return s or "agent"
-
-
-def graph_to_meta(graph: AgentGraph | None) -> dict[str, Any]:
-    if not graph:
-        return {}
-    return {
-        "agent_graph": graph.model_dump(mode="json"),
-    }

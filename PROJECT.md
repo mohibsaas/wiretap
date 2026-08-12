@@ -10,7 +10,7 @@ OSS, **CLI-first** voice-agent test simulator. Local-first, CI-capable, with a l
 
 Developers test **their live voice agents** from the terminal and get a report.
 
-- **Simulator** = fake caller (persona + goal; optional beats / Pipecat Flows)
+- **Simulator** = test agent (persona + goal; optional beats / Pipecat Flows)
 - **Live agent** = their deployed agent (Retell, Vapi, Bland, LiveKit, custom, …)
 - **Judge** = LLM-as-judge + rule checks; **suggestions only on fail**
 - **Import** = optional: fetch platform config + draft suites
@@ -36,11 +36,11 @@ wiretap init → edit local suite → wiretap simulate → wiretap report
 | CLI framework | **Typer** (Commander-style: verbs + nested subcommands) |
 | LLM | **LiteLLM** (simulator + judge; separate model slots) |
 | Simulator media | **Pipecat ≥1.5.0** |
-| Caller structure | Ladder: **prompt → beats → `pipecat.flows`** (Flows in-core, no separate package) |
-| Multi-agent (advanced) | Pipecat **Worker Bus** (handoff / fan-out / local or distributed) |
-| LangGraph | **Not on the Pipecat path** — Flows + Worker Bus cover it |
+| Test-agent structure | Ladder: **prompt → beats → `pipecat.flows`** via `TestAgentOrchestrator` |
+| Multi-agent (advanced) | Pipecat **Worker Bus** later (handoff / fan-out) |
+| LangGraph | Not on the Pipecat path |
 | AgentGraph | **IR only** for imports — **no execution engine** |
-| STT/TTS | Adapter ABCs; **pyai** soft-default; optional `wiretap[pyai]` |
+| STT/TTS | Factory on **transports**; default **pyai**; optional `wiretap[pyai]` |
 | Transports | **Voice-first:** WebSocket + LiveKit; `text` is CI/fallback. Phone/SIP deferred |
 | Platforms | Retell / Vapi / Bland presets; generic target always works |
 | Suite storage | **Default:** `.wiretap/suites/` (local) |
@@ -48,11 +48,11 @@ wiretap init → edit local suite → wiretap simulate → wiretap report
 | Simulations / reports | `.wiretap/simulations/` only — never the suite source of “results in git” |
 | Secrets | Env vars only — YAML holds ids + `token_env` names, never keys |
 | Eval | Judge + rules + metrics + regression; suggestions **on fail only** |
-| Isolation | One scenario = one caller + one session + one artifact |
+| Isolation | One scenario = one test agent + one session + one artifact |
 | Concurrency | `asyncio` + semaphore; no shared session state |
 | MCP | Optional `wiretap-mcp` wraps core |
 | License | Apache-2.0 |
-| UI | Local dashboard via `wiretap ui run` (FastAPI/uvicorn are core deps). Cloud dashboard out of scope |
+| UI | Local dashboard via `wiretap ui run` (FastAPI/uvicorn core). Cloud out of scope |
 | Cloud | Out of scope; SimulationArtifact schema stays ingest-friendly |
 
 ---
@@ -99,16 +99,16 @@ Does **not** modify the wiretap package itself (same as `uv init` writing *your*
 
 ---
 
-## 5. Caller ladder (versatile, progressive)
+## 5. Test-agent ladder
 
 | Level | Mechanism | Who |
 | --- | --- | --- |
 | **1. Prompt** | Persona + goal + rubric in suite YAML | Default |
 | **2. Beats** | Pin `say` / `must_include` at `at_turn` / `after_turns` | CI / stricter suites |
-| **3. Flows** | `pipecat.flows` node graph for the caller | Power users |
+| **3. Flows** | `pipecat.flows` `NodeConfig` IR (`flow_phases`) | Power users |
 
-Same runner: `CallerPolicy` seam (`observe_agent` / `next_utterance`).  
-Beats = thin v1 feature. Flows when beats aren’t enough. Worker Bus only for specialist/parallel callers later.
+Same seam: `TestAgentOrchestrator` (`observe_agent` / `next_utterance`).  
+Beats for critical lines; Flows when one prompt isn’t enough. Worker Bus later for specialist/parallel test agents.
 
 ---
 
@@ -147,13 +147,14 @@ Suites are **config**, not “test simulations in git.” Simulation artifacts u
 ┌──────────────┬─────────────────────────┬─────────────────────┐
 │ Importers    │ Runner (per scenario    │ Eval                │
 │ → draft      │  isolated)              │ Judge + rules       │
-│   suite +    │ CallerPolicy:           │ Suggestions on fail │
+│   suite +    │ TestAgentOrchestrator:  │ Suggestions on fail │
 │   AgentGraph │  prompt | beats | flows │ Metrics + regression│
-│   IR (data)  │ Pipecat media + STT/TTS │                     │
+│   IR (data)  │ Transport TTS/STT       │                     │
 └──────┬───────┴─────────────┬───────────┴──────────┬──────────┘
        │                     ▼                      │
        │              Transport adapters            │
-       │              text | webrtc | sip | pstn    │
+       │              text | Vapi WS | Retell LK    │
+       │              (phone/SIP deferred)          │
        │                     ▼                      ▼
        │              THEIR live agent         .wiretap/simulations/
        └──────────────────────────────────────────────────────
@@ -169,7 +170,7 @@ Suites are **config**, not “test simulations in git.” Simulation artifacts u
 - Regression vs baseline → CI exit code  
 - **Suggestions only when failed** (shown in `simulate` + `report` by default; not a gate)  
 
-Trust the fake caller via: strict mode, beats for critical lines, optional caller meta-check → inconclusive if caller went off-rails.
+Trust the test agent via: strict mode, beats for critical lines, optional contract check → inconclusive if the test agent went off-rails.
 
 ---
 
@@ -178,16 +179,17 @@ Trust the fake caller via: strict mode, beats for critical lines, optional calle
 | Area | Status |
 | --- | --- |
 | CLI `init \| import \| suite \| simulate \| report \| export \| ui` | Done |
-| Prompt + beats + `flow_phases` caller | Done (via Pipecat Flows orchestrator) |
+| Prompt + beats + `flow_phases` test agent | Done (`TestAgentOrchestrator`) |
 | Judge + rules + fail-only suggestions + regression | Done |
 | AgentGraph IR + Retell/Vapi/Bland importers | Done |
-| STT/TTS factory (pyai/openai + Deepgram/Cartesia/ElevenLabs/…) | Done |
+| STT/TTS factory on transports (pyai + …) | Done |
 | Meta-check / `--strict` → inconclusive | Done |
 | JUnit/JSON + GitHub Actions | Done |
 | Vapi WS voice + Retell LiveKit + text Chat fallback | Done |
 | Phone / SIP / Bland live dial | Deferred |
 | MCP (`wiretap-mcp`) | Done |
-| Pipecat core dep + Flows orchestrator + STT→LLM→TTS pipeline | Done |
+| Pipecat core + Flows IR orchestrator | Done |
+| Local UI onboarding + agents / suites / evaluations | Done |
 
 ### Still later
 - Phone / SIP / PSTN (inbound + outbound)  
@@ -197,7 +199,7 @@ Trust the fake caller via: strict mode, beats for critical lines, optional calle
 - Separate closed cloud (not this repo)  
 
 ### Non-goals
-- Dashboard in OSS  
+- Cloud / hosted dashboard (local UI is in OSS)  
 - Hard dep on any one LLM/STT/TTS (including pyai)  
 - Owning telephony infra  
 - AgentGraph execution / local live-agent emulation  
@@ -207,7 +209,7 @@ Trust the fake caller via: strict mode, beats for critical lines, optional calle
 
 ## 10. One-line summary
 
-**wiretap is a Typer CLI that keeps suites local under `.wiretap/`, calls your live voice agent with a prompt/beats/Flows caller, scores with a judge (suggestions on fail), and exports suites only when you want them in git/CI.**
+**wiretap is a Typer CLI that keeps suites local under `.wiretap/`, dials your live voice agent with a prompt/beats/Flows test agent, scores with a judge (suggestions on fail), and exports suites only when you want them in git/CI.**
 
 ## 11. Live platform transports (implemented)
 

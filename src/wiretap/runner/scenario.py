@@ -147,10 +147,6 @@ async def simulate_scenario(
     return artifact
 
 
-# Backward-compatible alias
-run_scenario = simulate_scenario
-
-
 def _persona(suite: SuiteConfig, persona_id: str) -> Persona:
     for p in suite.personas:
         if p.id == persona_id:

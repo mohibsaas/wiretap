@@ -17,7 +17,6 @@ from __future__ import annotations
 from typing import Any
 
 from wiretap.caller.beats import beat_for_turn
-from wiretap.media.pipeline import SpeechPipeline, build_speech_pipeline
 from wiretap.models import Beat, Persona, TurnRecord
 from wiretap.providers.llm import complete
 
@@ -101,13 +100,15 @@ class TestAgentOrchestrator:
         phases: list[dict[str, Any]] | None = None,
         beats: list[Beat] | None = None,
         temperature: float = 0.5,
-        speech: SpeechPipeline | None = None,
+        speech: dict[str, Any] | None = None,
     ) -> None:
         self.persona = persona
         self.success_criteria = success_criteria
         self.model = model
         self.beats = beats or []
         self.temperature = temperature
+        # Speech ids for artifacts only. Live TTS/STT is on the transport
+        # (configure_speech / factory), not SpeechPipeline.reply().
         self.speech = speech
         self.nodes = phases_to_nodes(
             persona=persona,
@@ -144,7 +145,7 @@ class TestAgentOrchestrator:
             "orchestrator": self._engine,
             "current_node": self.current_node_id,
             "nodes": self.flow_graph,
-            "speech": self.speech.describe() if self.speech else None,
+            "speech": self.speech,
         }
 
     def _enter_node(self, idx: int) -> None:
@@ -220,13 +221,6 @@ def build_orchestrator(
     tts: str = "pyai",
     voice: str | None = "alloy",
 ) -> TestAgentOrchestrator:
-    speech = build_speech_pipeline(
-        stt=stt,
-        tts=tts,
-        voice=voice,
-        llm_model=model,
-        temperature=temperature,
-    )
     return TestAgentOrchestrator(
         persona=persona,
         success_criteria=success_criteria,
@@ -234,7 +228,7 @@ def build_orchestrator(
         phases=phases,
         beats=beats,
         temperature=temperature,
-        speech=speech,
+        speech={"stt": stt, "tts": tts, "voice": voice},
     )
 
 

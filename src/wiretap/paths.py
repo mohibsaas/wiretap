@@ -24,11 +24,6 @@ def simulations_dir(cwd: Path | None = None) -> Path:
     return wiretap_root(cwd) / SIMULATIONS_DIRNAME
 
 
-def runs_dir(cwd: Path | None = None) -> Path:
-    """Deprecated alias for simulations_dir."""
-    return simulations_dir(cwd)
-
-
 def graphs_dir(cwd: Path | None = None) -> Path:
     return wiretap_root(cwd) / GRAPHS_DIRNAME
 
@@ -73,7 +68,6 @@ __all__ = [
     "SUITES_DIRNAME",
     "ensure_layout",
     "graphs_dir",
-    "runs_dir",
     "simulation_artifact_dirs",
     "simulations_dir",
     "suite_path",

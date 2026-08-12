@@ -77,7 +77,7 @@ class SpeechConfig(BaseModel):
 
 
 class SimulationMode(BaseModel):
-    """Caller / CI behavior knobs for a simulation."""
+    """Test-agent / CI behavior knobs for a simulation."""
 
     strict: bool = False
     temperature: float = 0.5
@@ -115,7 +115,7 @@ class RuleResult(BaseModel):
 
 
 class SimulationArtifact(BaseModel):
-    """One scenario simulation result (fake caller ↔ live agent ↔ judge)."""
+    """One scenario simulation result (test agent ↔ live agent ↔ judge)."""
 
     simulation_id: str = ""
     created_at: str = ""
@@ -130,10 +130,6 @@ class SimulationArtifact(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
-# Backward-compatible alias
-RunArtifact = SimulationArtifact
-
-
 __all__ = [
     "AgentTarget",
     "Beat",
@@ -142,7 +138,6 @@ __all__ = [
     "Persona",
     "RuleCheck",
     "RuleResult",
-    "RunArtifact",
     "RunMode",
     "Scenario",
     "SimulationArtifact",

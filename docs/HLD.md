@@ -1,109 +1,105 @@
 # wiretap — High-Level Design
 
-OSS, CLI-first **voice agent test simulator**. Wiretap dials **your live agent** with a **test agent**, scores the call, and stores artifacts locally under `.wiretap/`.
+Wiretap is a CLI that dials **your live voice agent** with a **test agent**, scores the call, and stores results under `.wiretap/`.
 
-## 1. Product thesis
+## Idea in one picture
 
 ```text
-Your live agent  ←── voice/text transport ──→  Wiretap test agent
-                                                      │
-                                              Pipecat Flows IR
-                                              LiteLLM (talk + judge)
-                                              STT / TTS adapters
+Your live agent  ←── transport (Vapi / Retell / text) ──→  Test agent
+                                                              │
+                                                    Pipecat Flows IR
+                                                    LiteLLM (say + judge)
+                                                    TTS/STT on transport
 ```
 
-- **Import ≠ transport.** Import pulls config/suites; simulate dials the live agent.
-- **AgentGraph** is IR only (no local execution of their agent).
-- **Secrets** live in `.env` only; suite YAML holds ids + `token_env` names.
+Three rules:
 
-## 2. Control plane (orchestrator)
+1. **Import ≠ dial.** Import drafts suites; `simulate` opens the live session.  
+2. **AgentGraph is data only.** We never re-run their agent locally.  
+3. **Secrets stay in `.env`.** YAML holds ids and `token_env` names.
 
-**Pipecat is the test-agent orchestrator.**
+## Pieces
 
-| Layer | Role |
+| Piece | Job |
 | --- | --- |
-| `TestAgentOrchestrator` | Control plane for simulate |
-| `pipecat.flows.types.NodeConfig` | Flow IR (nodes / role / tasks) |
-| Ladder | prompt → beats → multi-node Flows (`flow_phases`) |
-| `SpeechPipeline` | STT → LLM → TTS (Pipecat FrameProcessors when available) |
-| LiteLLM | Test-agent utterances + judge |
+| `TestAgentOrchestrator` | Control plane for what the test agent says |
+| Pipecat `NodeConfig` | Flow IR (prompt → beats → `flow_phases`) |
+| LiteLLM | Test-agent lines + judge |
+| Transport | Session to the live agent; voice TTS/STT here |
+| Rules + judge | Pass/fail + fail-only tips |
 
-Legacy `Caller` / `FlowCaller` remain importable but are **not** on the simulate path.
+Pipecat is a **core** dependency. We use Flows as the **node graph IR**. The CLI loop is turn-based against a live transport, so we do **not** run a full `FlowManager` + `PipelineWorker` (that path is for streaming Pipecat apps).
 
-Turn-based CLI simulate does **not** spin a full `FlowManager` + `PipelineWorker` (that API expects a streaming Pipecat app). Instead we execute the same Flows **node graph** turn-by-turn against the live transport.
+`SpeechPipeline` exists for optional STT→LLM→TTS experiments and tests. **Simulate does not call `SpeechPipeline.reply()`** — voice audio goes through transport `configure_speech` / factory adapters.
 
-## 3. Runtime path (one simulation)
+## One simulation
 
 ```text
 suite.yaml
    │
    ▼
 simulate_scenario
-   ├── build_transport(agent)     # Vapi WS | Retell LiveKit | text stub
-   ├── configure_speech(stt/tts)
-   ├── build_orchestrator(...)    # Pipecat Flows nodes + SpeechPipeline
+   ├── build_transport(agent)
+   ├── configure_speech(stt/tts)     # voice transports only
+   ├── build_orchestrator(...)       # Flows nodes + LiteLLM
    │
-   ├── loop max_turns
-   │     transport.receive()  → agent text
-   │     orchestrator.next_utterance()  → test-agent text (+ beats / node transitions)
-   │     transport.send_text()  → TTS into live call when voice
+   ├── loop (max_turns)
+   │     receive agent text
+   │     next test-agent utterance (beats / node steps)
+   │     send text (TTS on voice transports)
    │
-   ├── check_caller_contract (--strict → inconclusive)
-   ├── run_rules + judge_call (LiteLLM)
+   ├── caller-contract check (--strict → inconclusive)
+   ├── rules + LiteLLM judge
    └── SimulationArtifact → .wiretap/simulations/
 ```
 
-## 4. Media & providers
+## Speech defaults
 
-| Concern | Implementation |
+| Slot | Default | Notes |
+| --- | --- | --- |
+| LLM | OpenAI (via LiteLLM) | Simulator + judge model slots |
+| STT / TTS | PyAI | Speech-only; not an LLM |
+
+Factory adapters also cover OpenAI, Deepgram, Cartesia, ElevenLabs, and similar HTTP providers.
+
+## Surfaces
+
+| Surface | Role |
 | --- | --- |
-| STT | Factory: PyAI, OpenAI, Deepgram, AssemblyAI, Gladia, Groq |
-| TTS | Factory: PyAI, OpenAI, Deepgram, Cartesia, ElevenLabs, LMNT, Rime, PlayHT |
-| Defaults | LLM OpenAI; STT/TTS **PyAI** (speech-only) |
-| Transports | Vapi WebSocket voice (default), Retell LiveKit, text stub; phone/SIP deferred |
+| CLI | `init \| import \| suite \| simulate \| report \| export \| ui` |
+| Local UI | Onboarding + agents / suites / evaluations |
+| MCP | Optional `wiretap-mcp` |
+| CI | JUnit / JSON; inconclusive → skipped |
 
-## 5. Surfaces
-
-| Surface | Responsibility |
-| --- | --- |
-| CLI (`wiretap`) | `init \| import \| suite \| simulate \| report \| export \| ui` |
-| Local UI | First-run onboarding + agents / suites / evaluations |
-| MCP | Optional `wiretap-mcp` wraps core |
-| CI | JUnit/JSON; inconclusive = skipped |
-
-## 6. Data layout
+## Data layout
 
 ```text
 .wiretap/
-  suites/           # source of truth for scenarios
-  simulations/      # SimulationArtifact JSON (never the suite “results in git”)
+  suites/           # scenario definitions
+  simulations/      # artifacts (local; not “results in git”)
   graphs/           # imported AgentGraph IR
-  onboard.json      # non-secret onboarding prefs
+  onboard.json      # non-secret prefs
 .env                # secrets only
 ```
 
-## 7. Explicit non-goals / deferred
+## Not in this repo (yet)
 
 - Phone / SIP / Bland live dial  
-- Owning telephony infra  
+- Owning telephony  
 - Executing AgentGraph locally  
-- Closed cloud product (out of this repo)  
-- Azure/Google/AWS speech without full cloud IAM  
+- Cloud SaaS product  
 
-## 8. One diagram
+## Diagram
 
 ```mermaid
 flowchart LR
   subgraph Wiretap
     O[TestAgentOrchestrator<br/>Pipecat Flows IR]
-    S[SpeechPipeline<br/>STT / LLM / TTS]
     J[Judge + Rules]
-    O --> S
   end
-  T[Transport<br/>Vapi / Retell / text]
+  T[Transport<br/>Vapi / Retell / text<br/>TTS/STT here]
   L[Your live agent]
   O <--> T
-  S --> T
   T <--> L
   O --> J
 ```

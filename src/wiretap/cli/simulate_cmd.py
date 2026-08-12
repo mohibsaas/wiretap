@@ -92,26 +92,3 @@ def register(app: typer.Typer) -> None:
             print(f"[green]JSON[/green] {json_out}")
 
         raise typer.Exit(code=1 if failures else 0)
-
-    # Deprecated alias — prefer `wiretap simulate`
-    @app.command("run", hidden=True)
-    def run_alias(
-        suite: str = typer.Option("default", "--suite", "-s"),
-        all_scenarios: bool = typer.Option(False, "--all"),
-        scenario_id: str | None = typer.Option(None, "--scenario"),
-        concurrency: int = typer.Option(1, "--concurrency", "-c", min=1),
-        junit: Path | None = typer.Option(None, "--junit"),
-        json_out: Path | None = typer.Option(None, "--json"),
-        strict: bool = typer.Option(False, "--strict"),
-    ) -> None:
-        """Deprecated: use `wiretap simulate`."""
-        print("[yellow]Deprecated:[/yellow] use [bold]wiretap simulate[/bold]")
-        simulate_cmd(
-            suite=suite,
-            all_scenarios=all_scenarios,
-            scenario_id=scenario_id,
-            concurrency=concurrency,
-            junit=junit,
-            json_out=json_out,
-            strict=strict,
-        )

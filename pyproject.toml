@@ -22,14 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 pyai = ["pyai-sdk>=0.2.0"]
-# Kept for older install lines; Pipecat is now a core dependency.
-pipecat = []
 retell = ["livekit>=0.17.0"]
-# websockets is core (Vapi voice). Extra kept for older docs/install lines.
-vapi = []
-live = ["livekit>=0.17.0"]
-# Kept for backward-compat; UI deps are now core.
-ui = []
 mcp = ["mcp>=1.0.0"]
 dev = ["pytest>=8.0", "ruff>=0.6", "respx>=0.21"]
 

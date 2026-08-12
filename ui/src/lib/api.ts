@@ -126,13 +126,6 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export const client = {
   health: () => api<{ version: string }>("/api/health"),
   onboardStatus: () => api<OnboardStatus>("/api/onboard/status"),
-  secretsStatus: () => api<Record<string, boolean>>("/api/secrets/status"),
-  saveSecrets: (secrets: Record<string, string>) =>
-    api<{ updated: string[]; status: Record<string, boolean> }>("/api/secrets", {
-      method: "POST",
-      body: JSON.stringify({ secrets }),
-    }),
-  categories: () => api<Category[]>("/api/categories"),
   providers: () => api<ProviderCatalog>("/api/providers"),
   configureCaller: (body: {
     llm_provider?: string;
