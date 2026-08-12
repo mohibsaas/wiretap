@@ -1,7 +1,13 @@
 """Shared service layer for CLI, MCP, and local UI API."""
 
 from wiretap.services.batches import BatchRecord, get_batch, start_batch
-from wiretap.services.generator import generate_suite, list_categories
+from wiretap.services.generator import (
+    DEFAULT_CATEGORIES,
+    fill_suite_scenarios,
+    generate_suite,
+    list_categories,
+    parse_categories,
+)
 from wiretap.services.onboard import (
     connect_agent,
     generate_onboard_suite,
@@ -14,7 +20,9 @@ from wiretap.services.suites import get_suite, list_suites, suite_public_dict
 
 __all__ = [
     "BatchRecord",
+    "DEFAULT_CATEGORIES",
     "connect_agent",
+    "fill_suite_scenarios",
     "generate_onboard_suite",
     "generate_suite",
     "get_batch",
@@ -26,6 +34,7 @@ __all__ = [
     "list_simulations",
     "list_suites",
     "onboard_status",
+    "parse_categories",
     "start_batch",
     "suite_public_dict",
     "upsert_secrets",

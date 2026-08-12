@@ -65,7 +65,7 @@ Factory adapters also cover OpenAI, Deepgram, Cartesia, ElevenLabs, and similar 
 
 | Surface | Role |
 | --- | --- |
-| CLI | `init \| import \| suite \| simulate \| report \| export \| ui` |
+| CLI | `import \| suite \| simulate \| report \| export \| ui` |
 | Local UI | Onboarding + agents / suites / evaluations |
 | MCP | Optional `wiretap-mcp` |
 

@@ -1,4 +1,4 @@
-"""Starter suite YAML written by `wiretap init`."""
+"""Sample suite YAML for tests and docs."""
 
 DEFAULT_SUITE = """\
 # Local suite — secrets stay in the environment, not here.

@@ -48,8 +48,10 @@ class Scenario(BaseModel):
     rubric: str = ""
     rules: RuleCheck = Field(default_factory=RuleCheck)
     beats: list[Beat] = Field(default_factory=list)
-    # Optional Flows-style phases: [{id, task, max_turns}]
+    # Optional multi-step phases: [{id, task, max_turns}]
     flow_phases: list[dict] = Field(default_factory=list)
+    # Category tag for grouping in UI / reports (emotional, compliance, …)
+    category: str | None = None
 
 
 class AgentTarget(BaseModel):

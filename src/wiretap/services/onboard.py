@@ -20,7 +20,7 @@ from wiretap.providers.catalog import (
     known_provider_ids,
     provider_catalog,
 )
-from wiretap.services.generator import generate_suite, list_categories
+from wiretap.services.generator import generate_suite, list_categories, parse_categories
 from wiretap.services.secrets import key_status, upsert_secrets
 from wiretap.services.suites import list_suites
 
@@ -292,12 +292,13 @@ def generate_onboard_suite(
             "transport": "text" if plat == "custom" else "webrtc",
         }
 
+    cats = parse_categories(categories)
     suite = generate_suite(
         platform=str(agent_kwargs["platform"]),
         agent_id=agent_kwargs.get("agent_id"),
         agent_name=str(agent_name),
         purpose=purpose,
-        categories=categories,
+        categories=cats,
         tests_per_category=tests_per_category,
         transport=str(agent_kwargs.get("transport") or "webrtc"),
     )
@@ -322,7 +323,7 @@ def generate_onboard_suite(
     state.update(
         {
             "purpose": purpose,
-            "categories": categories,
+            "categories": cats,
             "tests_per_category": tests_per_category,
             "suite_name": name,
             "completed": True,
@@ -333,7 +334,7 @@ def generate_onboard_suite(
         "suite_name": name,
         "path": str(path),
         "scenario_count": len(suite.scenarios),
-        "categories": categories,
+        "categories": cats,
     }
 
 

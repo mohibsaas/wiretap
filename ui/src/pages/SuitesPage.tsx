@@ -28,7 +28,7 @@ export function SuitesPage() {
         {suites.length === 0 && !error && (
           <Card>
             <CardContent className="py-8 text-sm text-muted-foreground">
-              No suites yet. Use <code className="font-mono">wiretap init</code> or{" "}
+              No suites yet. Use <code className="font-mono">wiretap import</code> or{" "}
               <code className="font-mono">wiretap import</code>.
             </CardContent>
           </Card>

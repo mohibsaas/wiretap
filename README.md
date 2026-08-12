@@ -37,29 +37,76 @@ uv sync --extra dev
 
 ---
 
-## First run
+## Usage
 
-```bash
-uv run wiretap init
-uv run wiretap simulate --all
-uv run wiretap report
-```
+### Known platforms (Vapi / Retell)
 
-Connect a live platform agent:
+Import pulls the live agent config, then **generates category-tagged tests**
+(defaults: `emotional`, `compliance`, `task` — 3 tests each). Not LLM-based;
+templates you can regenerate anytime.
 
 ```bash
 # Vapi
 export VAPI_API_KEY=...
-export OPENAI_API_KEY=...   # test-agent LLM + judge
-export PYAI_API_KEY=...     # default STT/TTS for voice
+export OPENAI_API_KEY=...
+export PYAI_API_KEY=...
 
 uv run wiretap import vapi --assistant-id asst_xxx
+# optional: pick categories
+# uv run wiretap import vapi --assistant-id asst_xxx \
+#   --categories emotional,adversarial,task --tests-per-category 5
+# uv run wiretap import vapi --assistant-id asst_xxx --smoke-only   # no category tests
+
 uv run wiretap simulate --suite vapi --all
+uv run wiretap report
 
 # Retell
 export RETELL_API_KEY=...
 uv run wiretap import retell --agent-id agent_xxx
 uv run wiretap simulate --suite retell --all
+```
+
+**Generate or refresh tests later** (keeps the same agent target):
+
+```bash
+uv run wiretap suite categories
+uv run wiretap suite generate --suite vapi \
+  --categories emotional,linguistic,compliance --tests-per-category 5 \
+  --purpose "cancellation and refunds"
+```
+
+Same flow in the UI: connect agent → configure test agent → pick categories → generate.
+
+### Any / custom agent
+
+Hand-write a suite under `.wiretap/suites/<name>.yaml` (or `wiretap export` a suite and edit it). Point `agent:` at how wiretap should reach them:
+
+```yaml
+agent:
+  platform: vapi          # vapi | retell | null
+  agent_id: asst_xxx      # platform id when using vapi/retell
+  transport: webrtc       # or text for dry-run
+  token_env: VAPI_API_KEY # env var *name* — never the key itself
+
+# or local text stub (no platform):
+# agent:
+#   platform: null
+#   transport: text
+```
+
+Then:
+
+```bash
+uv run wiretap simulate --suite <name> --all
+uv run wiretap report
+```
+
+`platform: null` + `transport: text` is a local echo stub for dry-runs. Live custom SIP/phone is not available yet — use a supported platform endpoint, or text for offline checks.
+
+### Day-to-day loop
+
+```text
+import or edit suite  →  simulate (--all or --scenario)  →  report
 ```
 
 ---
@@ -68,9 +115,8 @@ uv run wiretap simulate --suite retell --all
 
 | Command | What it does |
 | --- | --- |
-| `wiretap init` | Create a starter suite in `.wiretap/suites/` |
-| `wiretap import …` | Pull platform config and draft scenarios |
-| `wiretap suite …` | List / show / path suites |
+| `wiretap import …` | Pull platform agent + generate category tests |
+| `wiretap suite …` | list / show / path / categories / generate |
 | `wiretap simulate` | Dial the live agent (`--all` or `--scenario <id>`) |
 | `wiretap report` | Summarize local simulation artifacts |
 | `wiretap export` | Copy a suite out for git or sharing |
@@ -103,9 +149,20 @@ First-run onboarding: **Your Agent** → **Test Agent** (LLM + STT/TTS) → **Wh
 2. **Beats** — pin exact lines on certain turns  
 3. **Phases** — multi-step goals via `flow_phases`  
 
-**Scoring:** deterministic rules + LiteLLM judge. Suggestions appear on fail only.
+**Test categories** (many tests per category; catch-all = `other`):
 
-Defaults: LLM **OpenAI** (`gpt-4o-mini`), speech **PyAI**.
+| Id | Focus |
+| --- | --- |
+| `emotional` | Frustrated, anxious, angry, sensitive |
+| `linguistic` | Ambiguity, repair, interruptions, language |
+| `adversarial` | Jailbreaks, social engineering, PII fishing |
+| `operational` | Hours, handoff, errors, callbacks |
+| `factual` | No invented prices/IDs/features |
+| `compliance` | Disclosures, verification, privacy |
+| `task` | Happy-path / core job completion |
+| `other` | Misc that does not fit above |
+
+Skipped/pending/running in a results grid are **run states**, not generation categories.
 
 ---
 
@@ -115,7 +172,7 @@ Defaults: LLM **OpenAI** (`gpt-4o-mini`), speech **PyAI**.
 | --- | --- | --- |
 | Vapi | WebSocket PCM (default) | Text Chat if `transport: text` or `room_url: chat` |
 | Retell | LiveKit | Set `RETELL_API_KEY` |
-| Custom / stub | Text | Local dry-run |
+| Custom / stub | Text | Local dry-run (`platform: null`) |
 | Bland | Import only | Live phone dial not available yet |
 | Phone / SIP | — | Not available yet |
 

@@ -23,7 +23,7 @@ from wiretap.services.onboard import (
     list_agents,
     onboard_status,
 )
-from wiretap.services.secrets import key_status, upsert_secrets
+from wiretap.services.secrets import key_status, load_dotenv, upsert_secrets
 from wiretap.services.simulations import get_simulation_detail, list_simulations
 from wiretap.services.suites import get_suite, list_suites, suite_public_dict
 
@@ -72,6 +72,7 @@ class GenerateBody(BaseModel):
 
 def create_app(*, cwd: Path | None = None) -> FastAPI:
     root = cwd or Path.cwd()
+    load_dotenv(root)
     app = FastAPI(title="wiretap", version=__version__)
 
     @app.get("/api/health")

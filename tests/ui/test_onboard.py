@@ -2,20 +2,30 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from wiretap.services.generator import generate_suite, list_categories
-from wiretap.services.secrets import key_status, upsert_secrets
+from wiretap.services.secrets import key_status, load_dotenv, upsert_secrets
 from wiretap.ui.app import create_app
 
 
-def test_categories_max_ten() -> None:
+def test_categories_catalog_and_generate() -> None:
     cats = list_categories()
-    assert any(c["id"] == "emotional" for c in cats)
-    assert any(c["id"] == "compliance" for c in cats)
+    ids = {c["id"] for c in cats}
+    assert {
+        "emotional",
+        "linguistic",
+        "adversarial",
+        "operational",
+        "factual",
+        "compliance",
+        "task",
+        "other",
+    } <= ids
     suite = generate_suite(
         platform="custom",
         agent_id="x",
@@ -25,8 +35,22 @@ def test_categories_max_ten() -> None:
         tests_per_category=10,
         transport="text",
     )
-    assert len(suite.scenarios) == 20
+    # Caps at available templates per category (8 emotional, 6 compliance)
+    assert len(suite.scenarios) == 14
     assert all(s.beats for s in suite.scenarios)
+    assert {s.category for s in suite.scenarios} == {"emotional", "compliance"}
+
+
+def test_load_dotenv_fills_environ(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-from-file\n", encoding="utf-8")
+    load_dotenv(tmp_path)
+    assert os.environ.get("OPENAI_API_KEY") == "sk-from-file"
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-shell")
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-from-file\n", encoding="utf-8")
+    load_dotenv(tmp_path)
+    assert os.environ.get("OPENAI_API_KEY") == "sk-shell"  # shell wins
 
 
 def test_upsert_secrets_never_echoes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

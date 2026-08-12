@@ -2,7 +2,7 @@
 
 Public API for library consumers. Prefer the CLI for day-to-day use:
 
-    uv run wiretap init
+    uv run wiretap import vapi --assistant-id asst_xxx
     uv run wiretap simulate --all
 """
 

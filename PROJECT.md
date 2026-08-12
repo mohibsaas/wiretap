@@ -20,7 +20,8 @@ Developers test **their live voice agents** from the terminal and get a report.
 Starting point for users:
 
 ```text
-wiretap init → edit local suite → wiretap simulate → wiretap report
+wiretap import → edit suite → wiretap simulate → wiretap report
+(or UI onboarding)
 (optional) import / export
 ```
 
@@ -58,7 +59,6 @@ wiretap init → edit local suite → wiretap simulate → wiretap report
 
 ```text
 wiretap
-├── init [--name default]          # → .wiretap/suites/<name>.yaml
 ├── import
 │   ├── retell  --agent-id
 │   ├── vapi    --assistant-id
@@ -73,7 +73,7 @@ wiretap
 
 **Glossary:** a **simulation** is one scenario execution (artifact). A **batch** is one UI “Start” that may execute 1..N simulations. `wiretap simulate` executes simulations from the CLI; `wiretap ui run` starts the dashboard server.
 
-**Write suite files:** `init`, `import`, `export` only (explicit).  
+**Write suite files:** `import`, `export`, or hand-edit / UI generate (explicit).  
 **`simulate` / `report`:** do not rewrite suite YAML; `simulate` appends under `.wiretap/simulations/`.
 
 Does **not** modify the wiretap package itself (same as `uv init` writing *your* project, not uv’s source).
@@ -175,7 +175,7 @@ Trust the test agent via: strict mode, beats for critical lines, optional contra
 
 | Area | Status |
 | --- | --- |
-| CLI `init \| import \| suite \| simulate \| report \| export \| ui` | Done |
+| CLI `import \| suite \| simulate \| report \| export \| ui` | Done |
 | Prompt + beats + `flow_phases` test agent | Done (`TestAgentOrchestrator`) |
 | Judge + rules + fail-only suggestions + regression | Done |
 | AgentGraph IR + Retell/Vapi/Bland importers | Done |

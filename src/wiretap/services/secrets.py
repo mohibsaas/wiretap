@@ -23,9 +23,17 @@ def env_file(cwd: Path | None = None) -> Path:
     return (cwd or Path.cwd()) / ".env"
 
 
+def load_dotenv(cwd: Path | None = None) -> None:
+    """Load cwd/.env into os.environ. Does not override vars already set."""
+    for key, val in _load_dotenv_map(env_file(cwd)).items():
+        if key and val and key not in os.environ:
+            os.environ[key] = val
+
+
 def key_status(cwd: Path | None = None) -> dict[str, bool]:
     """Return which managed keys are set (bool only)."""
     root = cwd or Path.cwd()
+    load_dotenv(root)
     merged = _load_dotenv_map(env_file(root))
     out: dict[str, bool] = {}
     for key in managed_secret_keys():
@@ -100,4 +108,4 @@ def _write_dotenv(path: Path, data: dict[str, str]) -> None:
         pass
 
 
-__all__ = ["MANAGED_KEYS", "env_file", "key_status", "upsert_secrets"]
+__all__ = ["MANAGED_KEYS", "env_file", "key_status", "load_dotenv", "upsert_secrets"]

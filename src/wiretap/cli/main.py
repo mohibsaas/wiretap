@@ -9,7 +9,6 @@ from wiretap import __version__
 from wiretap.cli import (
     export_cmd,
     import_cmd,
-    init_cmd,
     report_cmd,
     simulate_cmd,
     suite_cmd,
@@ -35,10 +34,12 @@ def main(
         False, "--version", callback=_version_callback, is_eager=True, help="Show version."
     ),
 ) -> None:
+    from wiretap.services.secrets import load_dotenv
+
+    load_dotenv()
     _ = version
 
 
-init_cmd.register(app)
 suite_cmd.register(app)
 simulate_cmd.register(app)
 report_cmd.register(app)

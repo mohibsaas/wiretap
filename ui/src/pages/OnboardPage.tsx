@@ -39,7 +39,11 @@ export function OnboardPage() {
   const [apiKey, setApiKey] = useState("");
 
   const [purpose, setPurpose] = useState("");
-  const [categories, setCategories] = useState<string[]>(["emotional", "compliance"]);
+  const [categories, setCategories] = useState<string[]>([
+    "emotional",
+    "compliance",
+    "task",
+  ]);
   const [perCat, setPerCat] = useState(5);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
