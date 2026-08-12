@@ -1,8 +1,8 @@
-"""Orchestrator / Pipecat Flows IR tests."""
+"""Test-agent orchestrator tests."""
 
 from __future__ import annotations
 
-from wiretap.caller.orchestrator import TestAgentOrchestrator, phases_to_nodes
+from wiretap.agent.orchestrator import TestAgentOrchestrator, phases_to_nodes
 from wiretap.models import Beat, Persona
 
 
@@ -22,8 +22,8 @@ def test_phases_to_single_node() -> None:
         phases=None,
     )
     assert len(nodes) == 1
-    assert nodes[0][0] == "main"
-    assert "role_message" in nodes[0][1]
+    assert nodes[0].id == "main"
+    assert nodes[0].role_message
 
 
 def test_phases_to_multi_node() -> None:
@@ -35,13 +35,13 @@ def test_phases_to_multi_node() -> None:
             {"id": "cancel", "task": "request cancellation", "max_turns": 3},
         ],
     )
-    assert [n[0] for n in nodes] == ["greet", "cancel"]
-    assert "greet" in (nodes[0][1].get("task_messages") or [{}])[0].get("content", "")
+    assert [n.id for n in nodes] == ["greet", "cancel"]
+    assert "greet" in nodes[0].task_messages[0]["content"]
 
 
 def test_orchestrator_beat_and_describe(monkeypatch) -> None:
     monkeypatch.setattr(
-        "wiretap.caller.orchestrator.complete",
+        "wiretap.agent.orchestrator.complete",
         lambda **kwargs: "I want to cancel [[HANGUP]]",
     )
     orch = TestAgentOrchestrator(
@@ -56,14 +56,14 @@ def test_orchestrator_beat_and_describe(monkeypatch) -> None:
     assert text == "Please cancel now"
     assert hangup is False
     desc = orch.describe()
-    assert desc["orchestrator"] == "pipecat.flows"
+    assert desc["orchestrator"] == "test_agent"
     assert desc["current_node"] == "a"
     assert len(desc["nodes"]) == 1
 
 
 def test_orchestrator_llm_hangup(monkeypatch) -> None:
     monkeypatch.setattr(
-        "wiretap.caller.orchestrator.complete",
+        "wiretap.agent.orchestrator.complete",
         lambda **kwargs: "Done [[HANGUP]]",
     )
     orch = TestAgentOrchestrator(

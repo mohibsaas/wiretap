@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from wiretap.config import DEFAULT_SUITE, load_suite
+from wiretap.suite import DEFAULT_SUITE, load_suite
 from wiretap.models import SuiteConfig
 
 

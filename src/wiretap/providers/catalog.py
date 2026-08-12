@@ -1,12 +1,11 @@
 """Provider catalogs for onboarding / suite config.
 
 LLM ids come from LiteLLM (`litellm.models_by_provider`) — **openai first**.
-STT/TTS ids follow common Pipecat service names with **pyai first**
+STT/TTS ids are curated speech providers with **pyai first**
 (pyai is speech-only: STT/TTS, not an LLM).
 
 Runtime adapters may not implement every id yet — the suite still stores the
-choice so a Pipecat worker / LiteLLM call can use it. Secret env names follow
-the usual `{PROVIDER}_API_KEY` convention (with a few well-known aliases).
+choice. Secret env names follow `{PROVIDER}_API_KEY` (with a few well-known aliases).
 """
 
 from __future__ import annotations
@@ -25,8 +24,8 @@ class ProviderInfo:
     default_model: str | None = None
 
 
-# Pipecat-oriented speech providers (curated; pyai inserted first at runtime).
-_PIPECAT_STT = (
+# Curated speech providers (pyai inserted first at runtime).
+_SPEECH_STT = (
     "deepgram",
     "assemblyai",
     "openai",
@@ -39,7 +38,7 @@ _PIPECAT_STT = (
     "speechmatics",
 )
 
-_PIPECAT_TTS = (
+_SPEECH_TTS = (
     "cartesia",
     "elevenlabs",
     "openai",
@@ -182,7 +181,7 @@ def llm_providers() -> list[ProviderInfo]:
 
 
 def stt_providers() -> list[ProviderInfo]:
-    ids = ["pyai", *[p for p in _PIPECAT_STT if p != "pyai"]]
+    ids = ["pyai", *[p for p in _SPEECH_STT if p != "pyai"]]
     return [
         ProviderInfo(id=pid, label=_label(pid), kind="stt", env=env_for_provider(pid))
         for pid in ids
@@ -190,7 +189,7 @@ def stt_providers() -> list[ProviderInfo]:
 
 
 def tts_providers() -> list[ProviderInfo]:
-    ids = ["pyai", *[p for p in _PIPECAT_TTS if p != "pyai"]]
+    ids = ["pyai", *[p for p in _SPEECH_TTS if p != "pyai"]]
     return [
         ProviderInfo(id=pid, label=_label(pid), kind="tts", env=env_for_provider(pid))
         for pid in ids

@@ -26,7 +26,7 @@ class TextToSpeechProvider(ABC):
 def suggest_pyai_if_unconfigured(stt: str | None, tts: str | None) -> None:
     if not stt or not tts:
         print(
-            "Tip: set speech.stt/tts to 'pyai' and install wiretap[pyai], "
+            "Tip: set speech.stt/tts to 'pyai' (default) and set PYAI_API_KEY, "
             "or choose another adapter explicitly."
         )
 

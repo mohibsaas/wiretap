@@ -1,6 +1,6 @@
 """AgentGraph IR tests."""
 
-from wiretap.ir import AgentGraph, GraphEdge, GraphNode, NodeType
+from wiretap.importers import AgentGraph, GraphEdge, GraphNode, NodeType
 
 
 def test_agent_graph_roundtrip() -> None:

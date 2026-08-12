@@ -43,7 +43,7 @@ class RetellTransport(Transport):
         except ImportError as exc:
             raise RuntimeError(
                 "Retell live transport requires livekit. "
-                "Install with: uv sync --extra retell"
+                "Reinstall with: uv sync"
             ) from exc
 
         agent_id = target.agent_id

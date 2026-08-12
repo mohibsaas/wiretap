@@ -6,13 +6,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from wiretap.config import dump_suite
+from wiretap.suite import dump_suite
 from wiretap.importers import (
     import_retell_agent,
     import_vapi_assistant,
 )
 from wiretap.importers.suite_builder import slug
-from wiretap.ir.agent_graph import AgentGraph
+from wiretap.importers.agent_graph import AgentGraph
 from wiretap.models import SuiteConfig
 from wiretap.paths import ensure_layout, graphs_dir, suite_path, wiretap_root
 from wiretap.providers.catalog import (
@@ -277,7 +277,7 @@ def generate_onboard_suite(
     agent_kwargs: dict[str, Any] = {}
     existing_path = suite_path(name, cwd) if state.get("suite_name") else None
     if existing_path and existing_path.is_file():
-        from wiretap.config import load_suite
+        from wiretap.suite import load_suite
 
         existing = load_suite(existing_path)
         agent_kwargs = {
@@ -310,7 +310,7 @@ def generate_onboard_suite(
 
     # Preserve token_env from import platforms
     if existing_path and existing_path.is_file():
-        from wiretap.config import load_suite
+        from wiretap.suite import load_suite
 
         existing = load_suite(existing_path)
         suite.agent.token_env = existing.agent.token_env

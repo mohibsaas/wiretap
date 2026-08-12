@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from wiretap.config import load_suite
+from wiretap.suite import load_suite
 from wiretap.models import SuiteConfig
 from wiretap.paths import suite_path, suites_dir
 

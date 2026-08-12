@@ -8,10 +8,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from wiretap.config import load_suite
+from wiretap.suite import load_suite
 from wiretap.models import SimulationArtifact, SuiteConfig
 from wiretap.paths import suite_path
-from wiretap.runner import simulate_scenario
+from wiretap.agent import simulate_scenario
 
 BatchStatus = Literal["pending", "running", "completed", "failed"]
 

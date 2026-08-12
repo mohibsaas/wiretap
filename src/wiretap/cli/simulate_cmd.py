@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 import typer
 from rich import print
 
-from wiretap.config import load_suite
+from wiretap.suite import load_suite
 from wiretap.paths import suite_path
-from wiretap.report import write_json_report, write_junit_report
-from wiretap.runner import simulate_scenario
+from wiretap.agent import simulate_scenario
 
 
 def register(app: typer.Typer) -> None:
@@ -28,12 +26,6 @@ def register(app: typer.Typer) -> None:
         ),
         concurrency: int = typer.Option(
             1, "--concurrency", "-c", min=1, help="Parallel simulations."
-        ),
-        junit: Path | None = typer.Option(
-            None, "--junit", help="Write JUnit XML report to this path."
-        ),
-        json_out: Path | None = typer.Option(
-            None, "--json", help="Write JSON report to this path."
         ),
         strict: bool = typer.Option(
             False, "--strict", help="Strict caller mode (low temp + contract checks)."
@@ -83,12 +75,5 @@ def register(app: typer.Typer) -> None:
                     print(f"    rule: {f}")
                 for s in art.judge.suggestions:
                     print(f"    • {s}")
-
-        if junit:
-            write_junit_report(artifacts, junit, suite_name=suite_id)
-            print(f"[green]JUnit[/green] {junit}")
-        if json_out:
-            write_json_report(artifacts, json_out)
-            print(f"[green]JSON[/green] {json_out}")
 
         raise typer.Exit(code=1 if failures else 0)

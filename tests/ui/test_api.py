@@ -7,10 +7,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from wiretap.config import dump_suite, load_suite
-from wiretap.config.templates import DEFAULT_SUITE
+from wiretap.suite import dump_suite, load_suite
+from wiretap.suite.templates import DEFAULT_SUITE
 from wiretap.models import JudgeResult, RuleResult, SimulationArtifact
-from wiretap.store import save_simulation
+from wiretap.suite import save_simulation
 from wiretap.ui.app import create_app
 
 

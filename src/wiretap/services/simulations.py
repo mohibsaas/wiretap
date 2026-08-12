@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from wiretap.models import SimulationArtifact
-from wiretap.store import get_simulation, iter_simulations
+from wiretap.suite import get_simulation, iter_simulations
 
 
 def list_simulations(cwd: Path | None = None, limit: int = 50) -> list[SimulationArtifact]:

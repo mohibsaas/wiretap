@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from wiretap.caller.orchestrator import build_orchestrator
+from wiretap.agent.orchestrator import build_orchestrator
 from wiretap.eval import check_caller_contract, judge_call, run_rules
 from wiretap.models import (
     JudgeResult,
@@ -15,7 +15,7 @@ from wiretap.models import (
     TurnRecord,
 )
 from wiretap.providers.speech import suggest_pyai_if_unconfigured
-from wiretap.store import latest_baseline, regression_failed, save_simulation
+from wiretap.suite import latest_baseline, regression_failed, save_simulation
 from wiretap.transport import build_transport
 
 

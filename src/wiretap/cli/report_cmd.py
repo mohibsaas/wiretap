@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 from rich import print
 
-from wiretap.store import iter_simulations
+from wiretap.suite import iter_simulations
 
 
 def register(app: typer.Typer) -> None:

@@ -1,8 +1,6 @@
 """OpenAI-compatible + vendor REST STT/TTS adapters.
 
-Used by live transports (Vapi/Retell). Prefer these one-shot HTTP calls over
-streaming Pipecat services for dial-in audio. The Pipecat pipeline runner wraps
-the same factory for STT→LLM→TTS turns.
+Used by live transports (Vapi/Retell) for one-shot dial-in audio.
 """
 
 from __future__ import annotations

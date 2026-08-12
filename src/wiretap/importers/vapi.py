@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 
 from wiretap.importers.suite_builder import suite_from_prompt
-from wiretap.ir.agent_graph import AgentGraph, GraphEdge, GraphNode, NodeType
+from wiretap.importers.agent_graph import AgentGraph, GraphEdge, GraphNode, NodeType
 from wiretap.models import SuiteConfig
 from wiretap.providers.env import require_env
 

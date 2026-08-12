@@ -7,7 +7,7 @@ import asyncio
 import typer
 from rich import print
 
-from wiretap.config import dump_suite
+from wiretap.suite import dump_suite
 from wiretap.importers import (
     import_bland_pathway,
     import_retell_agent,
@@ -42,7 +42,7 @@ def register(app: typer.Typer) -> None:
         """Fetch Retell agent + LLM config → suite + AgentGraph."""
         suite, graph = asyncio.run(import_retell_agent(agent_id))
         _save_import(name, suite, graph)
-        print("For live Retell runs: uv sync --extra retell")
+        print("For live Retell runs: set RETELL_API_KEY, then wiretap simulate --suite retell --all")
 
     @import_app.command("vapi")
     def import_vapi(

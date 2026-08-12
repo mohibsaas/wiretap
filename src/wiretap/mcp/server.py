@@ -15,11 +15,11 @@ def main() -> None:
             "MCP extra not installed. Install with: uv sync --extra mcp"
         ) from exc
 
-    from wiretap.config import load_suite
+    from wiretap.suite import load_suite
     from wiretap.importers import import_vapi_assistant
     from wiretap.paths import suite_path, suites_dir
-    from wiretap.runner import simulate_scenario
-    from wiretap.store import iter_simulations
+    from wiretap.agent import simulate_scenario
+    from wiretap.suite import iter_simulations
 
     mcp = FastMCP("wiretap")
 

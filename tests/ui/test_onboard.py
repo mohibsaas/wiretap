@@ -97,7 +97,7 @@ def test_onboard_generate_custom(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     agents = client.get("/api/agents")
     assert agents.status_code == 200
     # Suite YAML got caller stack applied
-    from wiretap.config import load_suite
+    from wiretap.suite import load_suite
     from wiretap.paths import suite_path
 
     suite = load_suite(suite_path(body["suite_name"], tmp_path))

@@ -1,31 +1,38 @@
-"""Test-agent orchestrator — Pipecat Flows as the control plane.
-
-Uses ``pipecat.flows.types.NodeConfig`` as the flow IR. Conversation turns are
-driven with LiteLLM (same model slots as the suite). Full ``FlowManager`` +
-``PipelineWorker`` is for streaming Pipecat apps; wiretap's CLI simulate loop is
-turn-based against a *live* agent transport, so we execute the Flows graph
-here without requiring a live PipelineWorker.
+"""Test-agent orchestrator — turn-based control plane for simulate.
 
 Ladder:
   1. Single-node prompt (no ``flow_phases``)
   2. Beats pin critical lines
-  3. Multi-node Flows from ``scenario.flow_phases``
+  3. Multi-phase flow from ``scenario.flow_phases``
+
+Voice STT/TTS lives on the transport; this module only decides what to say.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
-from wiretap.caller.beats import beat_for_turn
+from wiretap.agent.beats import beat_for_turn
 from wiretap.models import Beat, Persona, TurnRecord
 from wiretap.providers.llm import complete
 
-try:
-    from pipecat.flows.types import ContextStrategy, ContextStrategyConfig, NodeConfig
-except ImportError:  # pragma: no cover — pipecat is a core dep
-    ContextStrategy = None  # type: ignore[assignment,misc]
-    ContextStrategyConfig = None  # type: ignore[assignment,misc]
-    NodeConfig = dict  # type: ignore[misc,assignment]
+
+@dataclass
+class FlowNode:
+    """One step in the test-agent dialogue policy."""
+
+    id: str
+    role_message: str
+    task_messages: list[dict[str, str]] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.id,
+            "role_message": self.role_message,
+            "task_messages": self.task_messages,
+        }
 
 
 def phases_to_nodes(
@@ -33,8 +40,8 @@ def phases_to_nodes(
     persona: Persona,
     success_criteria: str,
     phases: list[dict[str, Any]] | None,
-) -> list[tuple[str, NodeConfig]]:
-    """Build an ordered Pipecat Flows node list from suite phases (or one node)."""
+) -> list[FlowNode]:
+    """Build an ordered node list from suite phases (or one default node)."""
     role = (
         f"You are a phone caller in a voice-agent test. Stay in character. "
         f"Short spoken replies only (1-3 sentences). No markdown.\n"
@@ -44,22 +51,23 @@ def phases_to_nodes(
         f"Success looks like: {success_criteria}"
     )
     if not phases:
-        node: NodeConfig = {
-            "name": "main",
-            "role_message": role,
-            "task_messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Produce the next caller utterance. "
-                        "When the goal is fully met, include [[HANGUP]]."
-                    ),
-                }
-            ],
-        }
-        return [("main", node)]
+        return [
+            FlowNode(
+                id="main",
+                role_message=role,
+                task_messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Produce the next caller utterance. "
+                            "When the goal is fully met, include [[HANGUP]]."
+                        ),
+                    }
+                ],
+            )
+        ]
 
-    out: list[tuple[str, NodeConfig]] = []
+    out: list[FlowNode] = []
     for i, phase in enumerate(phases):
         node_id = str(phase.get("id") or f"phase_{i}")
         task = phase.get("task") or phase.get("name") or "continue the call"
@@ -68,26 +76,23 @@ def phases_to_nodes(
             "When this phase is complete, include [[PHASE_DONE]]. "
             + ("When the whole call goal is met, include [[HANGUP]]." if is_last else "")
         )
-        cfg: NodeConfig = {
-            "name": node_id,
-            "role_message": role,
-            "task_messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        f"Current Flows node '{node_id}': {task}\n{done_hint}"
-                    ),
-                }
-            ],
-        }
-        if ContextStrategyConfig is not None and ContextStrategy is not None:
-            cfg["context_strategy"] = ContextStrategyConfig(strategy=ContextStrategy.RESET)
-        out.append((node_id, cfg))
+        out.append(
+            FlowNode(
+                id=node_id,
+                role_message=role,
+                task_messages=[
+                    {
+                        "role": "system",
+                        "content": f"Current phase '{node_id}': {task}\n{done_hint}",
+                    }
+                ],
+            )
+        )
     return out
 
 
 class TestAgentOrchestrator:
-    """Pipecat-Flows-shaped orchestrator for the wiretap test agent."""
+    """Turn-based dialogue policy for the wiretap test agent."""
 
     __test__ = False  # not a pytest test class
 
@@ -107,8 +112,7 @@ class TestAgentOrchestrator:
         self.model = model
         self.beats = beats or []
         self.temperature = temperature
-        # Speech ids for artifacts only. Live TTS/STT is on the transport
-        # (configure_speech / factory), not SpeechPipeline.reply().
+        # Speech ids for artifacts only. Live TTS/STT is on the transport.
         self.speech = speech
         self.nodes = phases_to_nodes(
             persona=persona,
@@ -119,26 +123,18 @@ class TestAgentOrchestrator:
         self._node_idx = 0
         self._turns_in_node = 0
         self._caller_turn = 0
-        self._engine = "pipecat.flows"
+        self._engine = "test_agent"
         self.history: list[dict[str, str]] = []
         self._enter_node(0)
 
     @property
     def current_node_id(self) -> str:
-        return self.nodes[self._node_idx][0]
+        return self.nodes[self._node_idx].id
 
     @property
     def flow_graph(self) -> list[dict[str, Any]]:
-        """Serializable Flows IR for artifacts / HLD."""
-        return [
-            {
-                "id": nid,
-                "name": cfg.get("name") or nid,
-                "role_message": cfg.get("role_message"),
-                "task_messages": cfg.get("task_messages"),
-            }
-            for nid, cfg in self.nodes
-        ]
+        """Serializable phase graph for artifacts."""
+        return [n.as_dict() for n in self.nodes]
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -151,12 +147,10 @@ class TestAgentOrchestrator:
     def _enter_node(self, idx: int) -> None:
         self._node_idx = idx
         self._turns_in_node = 0
-        _nid, cfg = self.nodes[idx]
-        role = str(cfg.get("role_message") or "")
-        tasks = list(cfg.get("task_messages") or [])
-        self.history = [{"role": "system", "content": role}]
-        for msg in tasks:
-            if isinstance(msg, dict) and msg.get("content"):
+        cfg = self.nodes[idx]
+        self.history = [{"role": "system", "content": cfg.role_message}]
+        for msg in cfg.task_messages:
+            if msg.get("content"):
                 self.history.append(
                     {"role": str(msg.get("role") or "system"), "content": str(msg["content"])}
                 )
@@ -233,6 +227,7 @@ def build_orchestrator(
 
 
 __all__ = [
+    "FlowNode",
     "TestAgentOrchestrator",
     "build_orchestrator",
     "phases_to_nodes",

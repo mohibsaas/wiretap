@@ -1,7 +1,7 @@
 """Importer suite builder tests."""
 
 from wiretap.importers.suite_builder import suite_from_prompt
-from wiretap.ir import AgentGraph, GraphNode, NodeType
+from wiretap.importers import AgentGraph, GraphNode, NodeType
 
 
 def test_suite_from_prompt() -> None:

@@ -1,6 +1,6 @@
-"""Caller package tests."""
+"""Agent package tests."""
 
-from wiretap.caller import beat_for_turn
+from wiretap.agent import beat_for_turn
 from wiretap.models import Beat
 
 

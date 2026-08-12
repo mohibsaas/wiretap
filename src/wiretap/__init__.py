@@ -6,8 +6,7 @@ Public API for library consumers. Prefer the CLI for day-to-day use:
     uv run wiretap simulate --all
 """
 
-from wiretap.caller import TestAgentOrchestrator, build_orchestrator
-from wiretap.config import load_suite
+from wiretap.agent import TestAgentOrchestrator, build_orchestrator, simulate_scenario
 from wiretap.models import (
     Beat,
     Persona,
@@ -15,7 +14,7 @@ from wiretap.models import (
     SimulationArtifact,
     SuiteConfig,
 )
-from wiretap.runner import simulate_scenario
+from wiretap.suite import load_suite
 
 __version__ = "0.1.0"
 

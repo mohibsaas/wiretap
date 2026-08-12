@@ -169,8 +169,8 @@ export function OnboardPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Welcome</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Connect your live agent and configure wiretap&apos;s test agent (LiteLLM +
-          Pipecat providers). Keys stay in local <code className="font-mono">.env</code>{" "}
+          Connect your live agent and configure wiretap&apos;s test agent (LLM +
+          speech providers). Keys stay in local <code className="font-mono">.env</code>{" "}
           only.
         </p>
       </div>
@@ -255,8 +255,7 @@ export function OnboardPage() {
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
                 Wiretap&apos;s test agent that dials your live agent — LLM via LiteLLM;
-                STT/TTS via Pipecat-compatible providers (pyai is speech-only and listed
-                first).
+                STT/TTS via speech providers (pyai is speech-only and listed first).
               </p>
 
               <label className="block space-y-1 text-sm">

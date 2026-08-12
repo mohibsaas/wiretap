@@ -5,11 +5,12 @@ Wiretap is a CLI that dials **your live voice agent** with a **test agent**, sco
 ## Idea in one picture
 
 ```text
-Your live agent  ←── transport (Vapi / Retell / text) ──→  Test agent
-                                                              │
-                                                    Pipecat Flows IR
-                                                    LiteLLM (say + judge)
-                                                    TTS/STT on transport
+   ┌─────────────┐         dial          ┌──────────────────┐
+   │   WIRETAP   │ ───────────────────▶  │ Your live agent  │
+   │             │   Vapi / Retell /     │                  │
+   │  test agent │   text                │  (Retell, Vapi,  │
+   │  + judge    │ ◀───────────────────  │   custom, …)     │
+   └─────────────┘         reply         └──────────────────┘
 ```
 
 Three rules:
@@ -22,15 +23,13 @@ Three rules:
 
 | Piece | Job |
 | --- | --- |
-| `TestAgentOrchestrator` | Control plane for what the test agent says |
-| Pipecat `NodeConfig` | Flow IR (prompt → beats → `flow_phases`) |
+| `TestAgentOrchestrator` | Turn-based policy for what the test agent says |
+| `FlowNode` / phases | Prompt → beats → `flow_phases` |
 | LiteLLM | Test-agent lines + judge |
 | Transport | Session to the live agent; voice TTS/STT here |
 | Rules + judge | Pass/fail + fail-only tips |
 
-Pipecat is a **core** dependency. We use Flows as the **node graph IR**. The CLI loop is turn-based against a live transport, so we do **not** run a full `FlowManager` + `PipelineWorker` (that path is for streaming Pipecat apps).
-
-`SpeechPipeline` exists for optional STT→LLM→TTS experiments and tests. **Simulate does not call `SpeechPipeline.reply()`** — voice audio goes through transport `configure_speech` / factory adapters.
+The CLI loop is turn-based against a live transport. Voice audio goes through transport `configure_speech` / factory adapters — not a separate media pipeline framework.
 
 ## One simulation
 
@@ -41,7 +40,7 @@ suite.yaml
 simulate_scenario
    ├── build_transport(agent)
    ├── configure_speech(stt/tts)     # voice transports only
-   ├── build_orchestrator(...)       # Flows nodes + LiteLLM
+   ├── build_orchestrator(...)       # phases + LiteLLM
    │
    ├── loop (max_turns)
    │     receive agent text
@@ -69,7 +68,6 @@ Factory adapters also cover OpenAI, Deepgram, Cartesia, ElevenLabs, and similar 
 | CLI | `init \| import \| suite \| simulate \| report \| export \| ui` |
 | Local UI | Onboarding + agents / suites / evaluations |
 | MCP | Optional `wiretap-mcp` |
-| CI | JUnit / JSON; inconclusive → skipped |
 
 ## Data layout
 
@@ -93,13 +91,10 @@ Factory adapters also cover OpenAI, Deepgram, Cartesia, ElevenLabs, and similar 
 
 ```mermaid
 flowchart LR
-  subgraph Wiretap
-    O[TestAgentOrchestrator<br/>Pipecat Flows IR]
-    J[Judge + Rules]
+  subgraph W["WIRETAP"]
+    A[test agent + judge]
   end
-  T[Transport<br/>Vapi / Retell / text<br/>TTS/STT here]
   L[Your live agent]
-  O <--> T
-  T <--> L
-  O --> J
+  W -->|"dial (Vapi / Retell / text)"| L
+  L -->|reply| W
 ```

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from wiretap.ir.agent_graph import AgentGraph
+from wiretap.importers.agent_graph import AgentGraph
 from wiretap.models import (
     AgentTarget,
     Beat,

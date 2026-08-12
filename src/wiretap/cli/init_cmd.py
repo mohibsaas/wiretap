@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 from rich import print
 
-from wiretap.config import DEFAULT_SUITE
+from wiretap.suite import DEFAULT_SUITE
 from wiretap.paths import ensure_layout, suite_path
 
 
