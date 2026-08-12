@@ -1,0 +1,245 @@
+"""Test-agent orchestrator — Pipecat Flows as the control plane.
+
+Uses ``pipecat.flows.types.NodeConfig`` as the flow IR. Conversation turns are
+driven with LiteLLM (same model slots as the suite). Full ``FlowManager`` +
+``PipelineWorker`` is for streaming Pipecat apps; wiretap's CLI simulate loop is
+turn-based against a *live* agent transport, so we execute the Flows graph
+here without requiring a live PipelineWorker.
+
+Ladder:
+  1. Single-node prompt (no ``flow_phases``)
+  2. Beats pin critical lines
+  3. Multi-node Flows from ``scenario.flow_phases``
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from wiretap.caller.beats import beat_for_turn
+from wiretap.media.pipeline import SpeechPipeline, build_speech_pipeline
+from wiretap.models import Beat, Persona, TurnRecord
+from wiretap.providers.llm import complete
+
+try:
+    from pipecat.flows.types import ContextStrategy, ContextStrategyConfig, NodeConfig
+except ImportError:  # pragma: no cover — pipecat is a core dep
+    ContextStrategy = None  # type: ignore[assignment,misc]
+    ContextStrategyConfig = None  # type: ignore[assignment,misc]
+    NodeConfig = dict  # type: ignore[misc,assignment]
+
+
+def phases_to_nodes(
+    *,
+    persona: Persona,
+    success_criteria: str,
+    phases: list[dict[str, Any]] | None,
+) -> list[tuple[str, NodeConfig]]:
+    """Build an ordered Pipecat Flows node list from suite phases (or one node)."""
+    role = (
+        f"You are a phone caller in a voice-agent test. Stay in character. "
+        f"Short spoken replies only (1-3 sentences). No markdown.\n"
+        f"Identity: {persona.identity}\n"
+        f"Goal: {persona.goal}\n"
+        f"Personality: {persona.personality or 'neutral'}\n"
+        f"Success looks like: {success_criteria}"
+    )
+    if not phases:
+        node: NodeConfig = {
+            "name": "main",
+            "role_message": role,
+            "task_messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Produce the next caller utterance. "
+                        "When the goal is fully met, include [[HANGUP]]."
+                    ),
+                }
+            ],
+        }
+        return [("main", node)]
+
+    out: list[tuple[str, NodeConfig]] = []
+    for i, phase in enumerate(phases):
+        node_id = str(phase.get("id") or f"phase_{i}")
+        task = phase.get("task") or phase.get("name") or "continue the call"
+        is_last = i == len(phases) - 1
+        done_hint = (
+            "When this phase is complete, include [[PHASE_DONE]]. "
+            + ("When the whole call goal is met, include [[HANGUP]]." if is_last else "")
+        )
+        cfg: NodeConfig = {
+            "name": node_id,
+            "role_message": role,
+            "task_messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        f"Current Flows node '{node_id}': {task}\n{done_hint}"
+                    ),
+                }
+            ],
+        }
+        if ContextStrategyConfig is not None and ContextStrategy is not None:
+            cfg["context_strategy"] = ContextStrategyConfig(strategy=ContextStrategy.RESET)
+        out.append((node_id, cfg))
+    return out
+
+
+class TestAgentOrchestrator:
+    """Pipecat-Flows-shaped orchestrator for the wiretap test agent."""
+
+    __test__ = False  # not a pytest test class
+
+    def __init__(
+        self,
+        *,
+        persona: Persona,
+        success_criteria: str,
+        model: str,
+        phases: list[dict[str, Any]] | None = None,
+        beats: list[Beat] | None = None,
+        temperature: float = 0.5,
+        speech: SpeechPipeline | None = None,
+    ) -> None:
+        self.persona = persona
+        self.success_criteria = success_criteria
+        self.model = model
+        self.beats = beats or []
+        self.temperature = temperature
+        self.speech = speech
+        self.nodes = phases_to_nodes(
+            persona=persona,
+            success_criteria=success_criteria,
+            phases=phases,
+        )
+        self._phase_meta = phases or []
+        self._node_idx = 0
+        self._turns_in_node = 0
+        self._caller_turn = 0
+        self._engine = "pipecat.flows"
+        self.history: list[dict[str, str]] = []
+        self._enter_node(0)
+
+    @property
+    def current_node_id(self) -> str:
+        return self.nodes[self._node_idx][0]
+
+    @property
+    def flow_graph(self) -> list[dict[str, Any]]:
+        """Serializable Flows IR for artifacts / HLD."""
+        return [
+            {
+                "id": nid,
+                "name": cfg.get("name") or nid,
+                "role_message": cfg.get("role_message"),
+                "task_messages": cfg.get("task_messages"),
+            }
+            for nid, cfg in self.nodes
+        ]
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "orchestrator": self._engine,
+            "current_node": self.current_node_id,
+            "nodes": self.flow_graph,
+            "speech": self.speech.describe() if self.speech else None,
+        }
+
+    def _enter_node(self, idx: int) -> None:
+        self._node_idx = idx
+        self._turns_in_node = 0
+        _nid, cfg = self.nodes[idx]
+        role = str(cfg.get("role_message") or "")
+        tasks = list(cfg.get("task_messages") or [])
+        self.history = [{"role": "system", "content": role}]
+        for msg in tasks:
+            if isinstance(msg, dict) and msg.get("content"):
+                self.history.append(
+                    {"role": str(msg.get("role") or "system"), "content": str(msg["content"])}
+                )
+
+    def observe_agent(self, text: str) -> None:
+        self.history.append({"role": "user", "content": f"Agent said: {text}"})
+
+    def next_utterance(self) -> tuple[str, bool]:
+        self._caller_turn += 1
+        self._turns_in_node += 1
+        beat = beat_for_turn(self.beats, self._caller_turn)
+        if beat and beat.say:
+            text = beat.say.strip()
+            self.history.append({"role": "assistant", "content": text})
+            return text, False
+
+        self.history.append(
+            {
+                "role": "user",
+                "content": "Produce your next spoken reply as the caller. Text only.",
+            }
+        )
+        text = complete(
+            model=self.model,
+            messages=self.history,
+            temperature=self.temperature,
+        )
+        self.history.append({"role": "assistant", "content": text})
+
+        hangup = "[[HANGUP]]" in text
+        phase_done = "[[PHASE_DONE]]" in text
+        clean = text.replace("[[HANGUP]]", "").replace("[[PHASE_DONE]]", "").strip()
+
+        if beat and beat.must_include and beat.must_include.lower() not in clean.lower():
+            clean = f"{clean} {beat.must_include}".strip()
+
+        max_turns = 8
+        if self._phase_meta and self._node_idx < len(self._phase_meta):
+            max_turns = int(self._phase_meta[self._node_idx].get("max_turns") or 4)
+
+        if phase_done or self._turns_in_node >= max_turns:
+            if self._node_idx < len(self.nodes) - 1:
+                self._enter_node(self._node_idx + 1)
+            elif phase_done and not hangup:
+                hangup = True
+
+        return clean, hangup
+
+    def as_turn(self, text: str) -> TurnRecord:
+        return TurnRecord(role="user", text=text, intended_text=text)
+
+
+def build_orchestrator(
+    *,
+    persona: Persona,
+    success_criteria: str,
+    model: str,
+    phases: list[dict[str, Any]] | None = None,
+    beats: list[Beat] | None = None,
+    temperature: float = 0.5,
+    stt: str = "pyai",
+    tts: str = "pyai",
+    voice: str | None = "alloy",
+) -> TestAgentOrchestrator:
+    speech = build_speech_pipeline(
+        stt=stt,
+        tts=tts,
+        voice=voice,
+        llm_model=model,
+        temperature=temperature,
+    )
+    return TestAgentOrchestrator(
+        persona=persona,
+        success_criteria=success_criteria,
+        model=model,
+        phases=phases,
+        beats=beats,
+        temperature=temperature,
+        speech=speech,
+    )
+
+
+__all__ = [
+    "TestAgentOrchestrator",
+    "build_orchestrator",
+    "phases_to_nodes",
+]

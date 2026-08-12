@@ -1,0 +1,53 @@
+name: wiretap
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Python
+        run: uv python install 3.12
+
+      - name: Sync
+        run: uv sync --extra dev
+
+      - name: UI build check
+        run: test -f src/wiretap/ui/static/index.html
+
+      - name: Lint
+        run: uv run ruff check src/wiretap
+
+      - name: Unit tests
+        run: uv run pytest -q
+
+      - name: Init + dry text run
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          uv run wiretap init --force
+          if [ -n "$OPENAI_API_KEY" ]; then
+            uv run wiretap simulate --all --junit junit.xml --json report.json
+          else
+            echo "OPENAI_API_KEY not set — skipping live LLM simulation"
+          fi
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wiretap-reports
+          path: |
+            junit.xml
+            report.json
+          if-no-files-found: ignore
