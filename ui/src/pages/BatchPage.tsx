@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { client, type Batch } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
@@ -7,11 +7,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 type LiveEvent = {
   type: string;
   scenario_id?: string;
+  scenario_name?: string;
   simulation_id?: string;
   passed?: boolean;
   inconclusive?: boolean;
   reason?: string;
   error?: string;
+  scenario_count?: number;
+  concurrency?: number;
+  failures?: number;
 };
 
 export function BatchPage() {
@@ -20,33 +24,56 @@ export function BatchPage() {
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    client
+  const refresh = useCallback(() => {
+    return client
       .batch(batchId)
       .then(setBatch)
       .catch((e: Error) => setError(e.message));
+  }, [batchId]);
+
+  useEffect(() => {
+    void refresh();
+
+    // Poll as a reliable fallback — EventSource can miss/end silently.
+    const poll = window.setInterval(() => {
+      void refresh();
+    }, 1000);
 
     const es = new EventSource(`/api/batches/${batchId}/events`);
     es.onmessage = (msg) => {
       try {
         const ev = JSON.parse(msg.data) as LiveEvent;
         setEvents((prev) => [...prev, ev]);
-        if (ev.type === "batch_completed" || ev.type === "batch_failed") {
-          client.batch(batchId).then(setBatch);
+        if (
+          ev.type === "batch_completed" ||
+          ev.type === "batch_failed" ||
+          ev.type === "simulation_finished" ||
+          ev.type === "simulation_failed"
+        ) {
+          void refresh();
         }
       } catch {
-        /* ignore */
+        /* ignore malformed frames */
       }
     };
     es.addEventListener("end", () => {
       es.close();
-      client.batch(batchId).then(setBatch).catch(() => undefined);
+      void refresh();
     });
     es.onerror = () => {
+      // Browser fires error when the stream closes; refresh final state.
+      if (es.readyState === EventSource.CLOSED) {
+        void refresh();
+      }
+    };
+
+    return () => {
+      window.clearInterval(poll);
       es.close();
     };
-    return () => es.close();
-  }, [batchId]);
+  }, [batchId, refresh]);
+
+  const done = batch?.status === "completed" || batch?.status === "failed";
 
   return (
     <div className="space-y-6">
@@ -59,7 +86,7 @@ export function BatchPage() {
       </div>
       {error && <p className="text-sm text-fail">{error}</p>}
       {batch && (
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex flex-wrap items-center gap-3 text-sm">
           <Badge
             variant={
               batch.status === "completed"
@@ -72,21 +99,42 @@ export function BatchPage() {
             {batch.status}
           </Badge>
           <span className="text-muted-foreground">suite {batch.suite}</span>
+          {done && (
+            <Link
+              to={`/evaluations/${batchId}`}
+              className="text-accent underline-offset-2 hover:underline"
+            >
+              View evaluation run →
+            </Link>
+          )}
         </div>
       )}
+      {batch?.error && <p className="text-sm text-fail">{batch.error}</p>}
 
       <Card>
         <CardHeader>
           <CardTitle>Progress</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 font-mono text-xs">
-          {events.length === 0 && (
-            <p className="font-sans text-sm text-muted-foreground">Waiting for events…</p>
+          {events.length === 0 && !done && (
+            <p className="font-sans text-sm text-muted-foreground">
+              Running… results appear as each scenario finishes.
+            </p>
           )}
           {events.map((ev, i) => (
             <div key={`${ev.type}-${i}`} className="flex flex-wrap items-center gap-2">
               <span className="text-muted-foreground">{ev.type}</span>
-              {ev.scenario_id && <span>{ev.scenario_id}</span>}
+              {(ev.scenario_name || ev.scenario_id) && (
+                <span>{ev.scenario_name || ev.scenario_id}</span>
+              )}
+              {typeof ev.concurrency === "number" && (
+                <span className="text-muted-foreground">
+                  concurrency {ev.concurrency}
+                  {typeof ev.scenario_count === "number"
+                    ? ` · ${ev.scenario_count} scenarios`
+                    : ""}
+                </span>
+              )}
               {typeof ev.passed === "boolean" && (
                 <Badge variant={ev.inconclusive ? "warn" : ev.passed ? "pass" : "fail"}>
                   {ev.inconclusive ? "inconclusive" : ev.passed ? "pass" : "fail"}
@@ -95,7 +143,7 @@ export function BatchPage() {
               {ev.simulation_id && (
                 <Link
                   className="text-accent underline-offset-2 hover:underline"
-                  to={`/evaluations/${ev.simulation_id}`}
+                  to={`/evaluations/${batchId}/scenarios/${ev.simulation_id}`}
                 >
                   open
                 </Link>
@@ -103,7 +151,7 @@ export function BatchPage() {
               {ev.reason && (
                 <span className="w-full truncate text-muted-foreground">{ev.reason}</span>
               )}
-              {ev.error && <span className="text-fail">{ev.error}</span>}
+              {ev.error && <span className="w-full text-fail">{ev.error}</span>}
             </div>
           ))}
         </CardContent>
@@ -117,11 +165,13 @@ export function BatchPage() {
           <CardContent className="divide-y divide-border p-0">
             {batch.results.map((r) => (
               <Link
-                key={r.simulation_id}
-                to={`/evaluations/${r.simulation_id}`}
+                key={r.simulation_id || r.scenario_id}
+                to={`/evaluations/${batchId}/scenarios/${r.simulation_id}`}
                 className="flex items-center justify-between px-4 py-3 hover:bg-muted/40"
               >
-                <span className="font-mono text-sm">{r.scenario_id}</span>
+                <span className="text-sm font-medium">
+                  {r.scenario_name || r.scenario_id}
+                </span>
                 <Badge
                   variant={r.meta?.inconclusive ? "warn" : r.passed ? "pass" : "fail"}
                 >
@@ -131,6 +181,17 @@ export function BatchPage() {
             ))}
           </CardContent>
         </Card>
+      )}
+
+      {done && batch && batch.results.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          Batch finished with no saved simulations. Check the progress log or API keys,
+          then open{" "}
+          <Link to="/evaluations" className="text-accent underline-offset-2 hover:underline">
+            Evaluations
+          </Link>
+          .
+        </p>
       )}
     </div>
   );

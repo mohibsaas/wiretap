@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import litellm
-
 
 def complete(
     *,
@@ -14,6 +12,8 @@ def complete(
     temperature: float = 0.4,
     max_tokens: int = 512,
 ) -> str:
+    import litellm  # heavy — import only when a completion is needed
+
     response: Any = litellm.completion(
         model=model,
         messages=messages,

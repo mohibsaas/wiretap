@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   client,
   type Category,
@@ -19,6 +19,9 @@ function envLabel(p?: ProviderInfo) {
 
 export function OnboardPage() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const addAgentMode = params.get("again") === "1";
+
   const [step, setStep] = useState<Step>(1);
   const [status, setStatus] = useState<OnboardStatus | null>(null);
   const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
@@ -54,10 +57,21 @@ export function OnboardPage() {
       .then(([s, providers]) => {
         setStatus(s);
         setCatalog(s.providers || providers);
-        if (s.platform) setPlatform(s.platform);
-        if (s.agent_id) setAgentId(s.agent_id);
-        if (s.purpose) setPurpose(s.purpose);
-        if (s.categories?.length) setCategories(s.categories);
+        // Adding another agent: only need platform + new agent id — don't reuse prior id.
+        if (addAgentMode) {
+          setPlatform(s.platform || "retell");
+          setAgentId("");
+          setPurpose("");
+        } else {
+          if (s.platform) setPlatform(s.platform);
+          if (s.agent_id) setAgentId(s.agent_id);
+          if (s.purpose) setPurpose(s.purpose);
+          if (s.categories?.length) setCategories(s.categories);
+          if (s.completed || s.platform) {
+            setConnectedName(s.agent_name || s.agent_id || null);
+          }
+          if (s.platform && !s.completed) setStep(2);
+        }
         const c = s.providers || providers;
         const llm = s.caller?.llm_provider || c.defaults.llm;
         setLlmProvider(llm);
@@ -74,16 +88,16 @@ export function OnboardPage() {
         setStt(s.caller?.stt || c.defaults.stt);
         setTts(s.caller?.tts || c.defaults.tts);
         setVoice(s.caller?.voice || c.defaults.voice);
-        if (s.completed || s.platform) {
-          setConnectedName(s.agent_name || s.agent_id || null);
-        }
-        if (s.platform && !s.completed) setStep(2);
       })
       .catch((e: Error) => setError(e.message));
-  }, []);
+  }, [addAgentMode]);
 
   const categoriesCatalog: Category[] = status?.categories_catalog || [];
   const platformNeedsKey = platform !== "custom";
+  const platformKeyEnv = `${platform.toUpperCase()}_API_KEY`;
+  const platformKeyAlreadySet = Boolean(status?.keys?.[platformKeyEnv]);
+  const showPlatformKey = platformNeedsKey && !platformKeyAlreadySet;
+
   const llmInfo = catalog?.llm.find((p) => p.id === llmProvider);
   const sttInfo = catalog?.stt.find((p) => p.id === stt);
   const ttsInfo = catalog?.tts.find((p) => p.id === tts);
@@ -92,10 +106,14 @@ export function OnboardPage() {
   const needTtsKey =
     ttsInfo && ttsInfo.env !== llmInfo?.env && ttsInfo.env !== sttInfo?.env;
 
+  // Test-agent stack is global; only configure on first run.
+  const showTestAgent = !addAgentMode && !status?.caller_configured;
+
   const canContinue = useMemo(() => {
     if (platform !== "custom" && !agentId.trim()) return false;
+    if (showPlatformKey && !apiKey.trim()) return false;
     return true;
-  }, [platform, agentId]);
+  }, [platform, agentId, showPlatformKey, apiKey]);
 
   function onLlmChange(next: string) {
     setLlmProvider(next);
@@ -110,24 +128,25 @@ export function OnboardPage() {
     setBusy(true);
     setError(null);
     try {
-      await client.configureCaller({
-        llm_provider: llmProvider,
-        llm_api_key: llmKey.trim() || null,
-        simulator_model: simulatorModel.trim() || "gpt-4o-mini",
-        judge_model: judgeModel.trim() || "gpt-4o-mini",
-        stt,
-        tts,
-        voice: voice.trim() || "alloy",
-        stt_api_key: needSttKey ? sttKey.trim() || null : null,
-        tts_api_key: needTtsKey ? ttsKey.trim() || null : null,
-        // Same-env speech providers reuse the LLM key via server-side env map
-        speech_api_key: null,
-      });
+      if (showTestAgent) {
+        await client.configureCaller({
+          llm_provider: llmProvider,
+          llm_api_key: llmKey.trim() || null,
+          simulator_model: simulatorModel.trim() || "gpt-4o-mini",
+          judge_model: judgeModel.trim() || "gpt-4o-mini",
+          stt,
+          tts,
+          voice: voice.trim() || "alloy",
+          stt_api_key: needSttKey ? sttKey.trim() || null : null,
+          tts_api_key: needTtsKey ? ttsKey.trim() || null : null,
+          speech_api_key: null,
+        });
+      }
 
       const res = await client.connect({
         platform,
         agent_id: agentId.trim() || null,
-        api_key: platformNeedsKey && apiKey.trim() ? apiKey.trim() : null,
+        api_key: showPlatformKey && apiKey.trim() ? apiKey.trim() : null,
       });
 
       setLlmKey("");
@@ -171,16 +190,20 @@ export function OnboardPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Welcome</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {addAgentMode ? "Add agent" : "Welcome"}
+        </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Connect your live agent and configure wiretap&apos;s test agent (LLM +
-          speech providers). Keys stay in local <code className="font-mono">.env</code>{" "}
-          only.
+          {addAgentMode
+            ? "Pick the provider and agent id. Existing API keys in local .env are reused."
+            : "Connect your live agent and configure wiretap's test agent (LLM + speech). Keys stay in local .env only."}
         </p>
       </div>
 
       <div className="flex gap-2 text-xs">
-        <Badge variant={step === 1 ? "default" : "muted"}>1 · Connect</Badge>
+        <Badge variant={step === 1 ? "default" : "muted"}>
+          1 · {addAgentMode ? "Agent" : "Connect"}
+        </Badge>
         <Badge variant={step === 2 ? "default" : "muted"}>2 · Tests</Badge>
       </div>
 
@@ -202,7 +225,10 @@ export function OnboardPage() {
                 <select
                   className="h-9 w-full rounded-md border border-border bg-card px-3"
                   value={platform}
-                  onChange={(e) => setPlatform(e.target.value)}
+                  onChange={(e) => {
+                    setPlatform(e.target.value);
+                    setApiKey("");
+                  }}
                 >
                   <option value="retell">Retell</option>
                   <option value="vapi">Vapi</option>
@@ -211,23 +237,25 @@ export function OnboardPage() {
               </label>
               {platformNeedsKey ? (
                 <>
-                  <label className="block space-y-1 text-sm">
-                    <span className="text-muted-foreground">
-                      {platform.toUpperCase()} API key
-                    </span>
-                    <input
-                      type="password"
-                      autoComplete="off"
-                      className="h-9 w-full rounded-md border border-border bg-card px-3"
-                      placeholder={
-                        status?.keys?.[`${platform.toUpperCase()}_API_KEY`]
-                          ? "•••• set locally"
-                          : "API key"
-                      }
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                    />
-                  </label>
+                  {showPlatformKey ? (
+                    <label className="block space-y-1 text-sm">
+                      <span className="text-muted-foreground">
+                        {platform.toUpperCase()} API key
+                      </span>
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        className="h-9 w-full rounded-md border border-border bg-card px-3"
+                        placeholder="API key"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                      />
+                    </label>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Using existing {platformKeyEnv} from .env
+                    </p>
+                  )}
                   <label className="block space-y-1 text-sm">
                     <span className="text-muted-foreground">Agent ID</span>
                     <input
@@ -252,53 +280,25 @@ export function OnboardPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Test Agent</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Wiretap&apos;s test agent that dials your live agent — LLM via LiteLLM;
-                STT/TTS via speech providers (pyai is speech-only and listed first).
-              </p>
+          {showTestAgent && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Test Agent</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Wiretap&apos;s test agent that dials your live agent — LLM via LiteLLM;
+                  STT/TTS via speech providers (pyai is speech-only and listed first).
+                </p>
 
-              <label className="block space-y-1 text-sm">
-                <span className="text-muted-foreground">LLM</span>
-                <select
-                  className="h-9 w-full rounded-md border border-border bg-card px-3"
-                  value={llmProvider}
-                  onChange={(e) => onLlmChange(e.target.value)}
-                >
-                  {(catalog?.llm || [{ id: "openai", label: "OpenAI" }]).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block space-y-1 text-sm">
-                <span className="text-muted-foreground">{envLabel(llmInfo)}</span>
-                <input
-                  type="password"
-                  autoComplete="off"
-                  className="h-9 w-full rounded-md border border-border bg-card px-3"
-                  placeholder={
-                    llmInfo && status?.keys?.[llmInfo.env] ? "•••• set locally" : "API key"
-                  }
-                  value={llmKey}
-                  onChange={(e) => setLlmKey(e.target.value)}
-                />
-              </label>
-
-              <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block space-y-1 text-sm">
-                  <span className="text-muted-foreground">STT</span>
+                  <span className="text-muted-foreground">LLM</span>
                   <select
                     className="h-9 w-full rounded-md border border-border bg-card px-3"
-                    value={stt}
-                    onChange={(e) => setStt(e.target.value)}
+                    value={llmProvider}
+                    onChange={(e) => onLlmChange(e.target.value)}
                   >
-                    {(catalog?.stt || [{ id: "pyai", label: "PyAI" }]).map((p) => (
+                    {(catalog?.llm || [{ id: "openai", label: "OpenAI" }]).map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.label}
                       </option>
@@ -306,99 +306,136 @@ export function OnboardPage() {
                   </select>
                 </label>
                 <label className="block space-y-1 text-sm">
-                  <span className="text-muted-foreground">TTS</span>
-                  <select
-                    className="h-9 w-full rounded-md border border-border bg-card px-3"
-                    value={tts}
-                    onChange={(e) => setTts(e.target.value)}
-                  >
-                    {(catalog?.tts || [{ id: "pyai", label: "PyAI" }]).map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              {needSttKey && (
-                <label className="block space-y-1 text-sm">
-                  <span className="text-muted-foreground">
-                    STT · {envLabel(sttInfo)}
-                  </span>
+                  <span className="text-muted-foreground">{envLabel(llmInfo)}</span>
                   <input
                     type="password"
                     autoComplete="off"
                     className="h-9 w-full rounded-md border border-border bg-card px-3"
                     placeholder={
-                      sttInfo && status?.keys?.[sttInfo.env]
-                        ? "•••• set locally"
-                        : "API key"
+                      llmInfo && status?.keys?.[llmInfo.env] ? "•••• set locally" : "API key"
                     }
-                    value={sttKey}
-                    onChange={(e) => setSttKey(e.target.value)}
+                    value={llmKey}
+                    onChange={(e) => setLlmKey(e.target.value)}
                   />
                 </label>
-              )}
-              {needTtsKey && (
-                <label className="block space-y-1 text-sm">
-                  <span className="text-muted-foreground">
-                    TTS · {envLabel(ttsInfo)}
-                  </span>
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    className="h-9 w-full rounded-md border border-border bg-card px-3"
-                    placeholder={
-                      ttsInfo && status?.keys?.[ttsInfo.env]
-                        ? "•••• set locally"
-                        : "API key"
-                    }
-                    value={ttsKey}
-                    onChange={(e) => setTtsKey(e.target.value)}
-                  />
-                </label>
-              )}
 
-              <label className="block space-y-1 text-sm">
-                <span className="text-muted-foreground">TTS Voice</span>
-                <input
-                  className="h-9 w-full rounded-md border border-border bg-card px-3"
-                  value={voice}
-                  onChange={(e) => setVoice(e.target.value)}
-                  placeholder="alloy"
-                />
-              </label>
-
-              <button
-                type="button"
-                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-                onClick={() => setShowModels((v) => !v)}
-              >
-                {showModels ? "Hide models" : "Test Agent / Judge Models"}
-              </button>
-              {showModels && (
-                <div className="grid gap-3 sm:grid-cols-2 border-t border-border pt-4">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block space-y-1 text-sm">
-                    <span className="text-muted-foreground">Test Agent Model</span>
-                    <input
-                      className="h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
-                      value={simulatorModel}
-                      onChange={(e) => setSimulatorModel(e.target.value)}
-                    />
+                    <span className="text-muted-foreground">STT</span>
+                    <select
+                      className="h-9 w-full rounded-md border border-border bg-card px-3"
+                      value={stt}
+                      onChange={(e) => setStt(e.target.value)}
+                    >
+                      {(catalog?.stt || [{ id: "pyai", label: "PyAI" }]).map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                   <label className="block space-y-1 text-sm">
-                    <span className="text-muted-foreground">Judge Model</span>
-                    <input
-                      className="h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
-                      value={judgeModel}
-                      onChange={(e) => setJudgeModel(e.target.value)}
-                    />
+                    <span className="text-muted-foreground">TTS</span>
+                    <select
+                      className="h-9 w-full rounded-md border border-border bg-card px-3"
+                      value={tts}
+                      onChange={(e) => setTts(e.target.value)}
+                    >
+                      {(catalog?.tts || [{ id: "pyai", label: "PyAI" }]).map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 </div>
-              )}
-            </CardContent>
-          </Card>
+
+                {needSttKey && (
+                  <label className="block space-y-1 text-sm">
+                    <span className="text-muted-foreground">
+                      STT · {envLabel(sttInfo)}
+                    </span>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      className="h-9 w-full rounded-md border border-border bg-card px-3"
+                      placeholder={
+                        sttInfo && status?.keys?.[sttInfo.env]
+                          ? "•••• set locally"
+                          : "API key"
+                      }
+                      value={sttKey}
+                      onChange={(e) => setSttKey(e.target.value)}
+                    />
+                  </label>
+                )}
+                {needTtsKey && (
+                  <label className="block space-y-1 text-sm">
+                    <span className="text-muted-foreground">
+                      TTS · {envLabel(ttsInfo)}
+                    </span>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      className="h-9 w-full rounded-md border border-border bg-card px-3"
+                      placeholder={
+                        ttsInfo && status?.keys?.[ttsInfo.env]
+                          ? "•••• set locally"
+                          : "API key"
+                      }
+                      value={ttsKey}
+                      onChange={(e) => setTtsKey(e.target.value)}
+                    />
+                  </label>
+                )}
+
+                <label className="block space-y-1 text-sm">
+                  <span className="text-muted-foreground">TTS Voice</span>
+                  <input
+                    className="h-9 w-full rounded-md border border-border bg-card px-3"
+                    value={voice}
+                    onChange={(e) => setVoice(e.target.value)}
+                    placeholder="alloy"
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                  onClick={() => setShowModels((v) => !v)}
+                >
+                  {showModels ? "Hide models" : "Test Agent / Judge Models"}
+                </button>
+                {showModels && (
+                  <div className="grid gap-3 sm:grid-cols-2 border-t border-border pt-4">
+                    <label className="block space-y-1 text-sm">
+                      <span className="text-muted-foreground">Test Agent Model</span>
+                      <input
+                        className="h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
+                        value={simulatorModel}
+                        onChange={(e) => setSimulatorModel(e.target.value)}
+                      />
+                    </label>
+                    <label className="block space-y-1 text-sm">
+                      <span className="text-muted-foreground">Judge Model</span>
+                      <input
+                        className="h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
+                        value={judgeModel}
+                        onChange={(e) => setJudgeModel(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {addAgentMode && status?.caller_configured && (
+            <p className="text-xs text-muted-foreground">
+              Test agent already configured ({status.caller?.llm_provider} / STT{" "}
+              {status.caller?.stt} / TTS {status.caller?.tts}). Not asked again.
+            </p>
+          )}
 
           <Button onClick={continueToSuite} disabled={busy || !canContinue}>
             {busy ? "Connecting…" : "Continue"}
@@ -462,8 +499,10 @@ export function OnboardPage() {
               />
             </label>
             <p className="text-xs text-muted-foreground">
-              About {categories.length * perCat} scenarios · Test Agent {llmProvider} / STT{" "}
-              {stt} / TTS {tts}
+              About {categories.length * perCat} scenarios
+              {status?.caller
+                ? ` · Test Agent ${status.caller.llm_provider} / STT ${status.caller.stt} / TTS ${status.caller.tts}`
+                : ` · Test Agent ${llmProvider} / STT ${stt} / TTS ${tts}`}
             </p>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setStep(1)}>

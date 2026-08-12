@@ -15,8 +15,8 @@ def _allowed_keys() -> set[str]:
     return set(managed_secret_keys())
 
 
-# Back-compat alias for imports/tests
-MANAGED_KEYS = managed_secret_keys()
+# Back-compat: prefer managed_secret_keys() — do not compute at import time.
+MANAGED_KEYS: tuple[str, ...] = ()
 
 
 def env_file(cwd: Path | None = None) -> Path:

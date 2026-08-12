@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { client, type SuiteDetail } from "@/lib/api";
+import { client, type AgentRow, type SuiteDetail } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,10 +9,12 @@ export function SuiteDetailPage() {
   const { name = "" } = useParams();
   const navigate = useNavigate();
   const [suite, setSuite] = useState<SuiteDetail | null>(null);
+  const [agents, setAgents] = useState<AgentRow[]>([]);
   const [scenario, setScenario] = useState<string>("");
   const [all, setAll] = useState(true);
   const [strict, setStrict] = useState(false);
   const [concurrency, setConcurrency] = useState(1);
+  const [agentFrom, setAgentFrom] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -27,6 +29,7 @@ export function SuiteDetailPage() {
         }
       })
       .catch((e: Error) => setError(e.message));
+    client.agents().then(setAgents).catch(() => undefined);
   }, [name]);
 
   async function start() {
@@ -39,6 +42,7 @@ export function SuiteDetailPage() {
         scenario: all ? null : scenario || null,
         concurrency,
         strict,
+        agent_from: agentFrom || null,
       });
       navigate(`/batches/${batch_id}`);
     } catch (e) {
@@ -51,6 +55,8 @@ export function SuiteDetailPage() {
   if (!suite && !error) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
+
+  const otherAgents = agents.filter((a) => a.suite && a.suite !== name);
 
   return (
     <div className="space-y-6">
@@ -95,11 +101,32 @@ export function SuiteDetailPage() {
                   <option value="">Select scenario…</option>
                   {suite.scenarios.map((sc) => (
                     <option key={sc.id} value={sc.id}>
-                      {sc.id} — {sc.name}
+                      {sc.name}
                     </option>
                   ))}
                 </select>
               )}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Run against agent</label>
+                <select
+                  className="h-9 w-full rounded-md border border-border bg-card px-3 text-sm"
+                  value={agentFrom}
+                  onChange={(e) => setAgentFrom(e.target.value)}
+                >
+                  <option value="">Suite default ({suite.agent.agent_id || "embedded"})</option>
+                  {otherAgents.map((a) => (
+                    <option key={`${a.suite}-${a.agent_id}`} value={a.suite || ""}>
+                      {(a.name || a.agent_id || a.suite) +
+                        (a.platform ? ` · ${a.platform}` : "") +
+                        (a.suite ? ` (from suite ${a.suite})` : "")}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Suites embed one default agent. Pick another suite&apos;s agent to
+                  reuse these tests without editing YAML.
+                </p>
+              </div>
               <div className="flex flex-wrap items-center gap-4 text-sm">
                 <label className="flex items-center gap-2">
                   Concurrency
@@ -134,10 +161,9 @@ export function SuiteDetailPage() {
               {suite.scenarios.map((sc) => (
                 <div key={sc.id} className="px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm font-medium">{sc.id}</span>
-                    <Badge variant="muted">{sc.persona_id}</Badge>
+                    <span className="text-sm font-medium">{sc.name}</span>
+                    {sc.category && <Badge variant="muted">{sc.category}</Badge>}
                   </div>
-                  <p className="mt-1 text-sm text-muted-foreground">{sc.name}</p>
                   <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                     {sc.success_criteria}
                   </p>

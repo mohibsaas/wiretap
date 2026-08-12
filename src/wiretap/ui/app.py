@@ -25,6 +25,7 @@ from wiretap.services.onboard import (
 )
 from wiretap.services.secrets import key_status, load_dotenv, upsert_secrets
 from wiretap.services.simulations import get_simulation_detail, list_simulations
+from wiretap.suite.evaluations import evaluation_run_detail, list_evaluation_runs
 from wiretap.services.suites import get_suite, list_suites, suite_public_dict
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -36,6 +37,10 @@ class StartBatchBody(BaseModel):
     scenario: str | None = None
     concurrency: int = 1
     strict: bool = False
+    agent_id: str | None = None
+    platform: str | None = None
+    token_env: str | None = None
+    agent_from: str | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -187,6 +192,10 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
                 scenario_id=body.scenario,
                 concurrency=body.concurrency,
                 strict=body.strict,
+                agent_id=body.agent_id,
+                platform=body.platform,
+                token_env=body.token_env,
+                agent_from=body.agent_from,
                 cwd=root,
             )
         except (KeyError, ValueError, FileNotFoundError) as exc:
@@ -216,7 +225,27 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
                 yield f"data: {json.dumps(event)}\n\n"
                 await asyncio.sleep(0)
 
-        return StreamingResponse(gen(), media_type="text/event-stream")
+        return StreamingResponse(
+            gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.get("/api/evaluations")
+    def api_list_evaluations(limit: int = 40) -> list[dict[str, Any]]:
+        """Parent evaluation runs (one suite execution each)."""
+        return list_evaluation_runs(root, limit=limit)
+
+    @app.get("/api/evaluations/{batch_id}")
+    def api_get_evaluation(batch_id: str) -> dict[str, Any]:
+        detail = evaluation_run_detail(batch_id, root)
+        if not detail:
+            raise HTTPException(404, "evaluation not found")
+        return detail
 
     @app.get("/api/simulations")
     def api_list_simulations(limit: int = 50) -> list[dict[str, Any]]:
@@ -228,6 +257,20 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
         if not art:
             raise HTTPException(404, "simulation not found")
         return art.model_dump(mode="json")
+
+    @app.get("/api/simulations/{simulation_id}/audio")
+    def api_simulation_audio(simulation_id: str) -> FileResponse:
+        from wiretap.suite.audio import resolve_audio_path
+
+        art = get_simulation_detail(simulation_id, root)
+        if not art:
+            raise HTTPException(404, "simulation not found")
+        if not art.audio_path:
+            raise HTTPException(404, "no audio for this simulation")
+        path = resolve_audio_path(art.audio_path, root)
+        if not path:
+            raise HTTPException(404, "audio file missing")
+        return FileResponse(path, media_type="audio/wav", filename=f"{simulation_id}.wav")
 
     if STATIC_DIR.is_dir() and (STATIC_DIR / "index.html").is_file():
         assets = STATIC_DIR / "assets"

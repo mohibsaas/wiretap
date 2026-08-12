@@ -5,14 +5,7 @@ from __future__ import annotations
 import typer
 from rich import print
 
-from wiretap.paths import ensure_layout, suite_path, suites_dir
-from wiretap.services.generator import (
-    DEFAULT_CATEGORIES,
-    fill_suite_scenarios,
-    list_categories,
-    parse_categories,
-)
-from wiretap.suite import dump_suite, load_suite
+from wiretap.services.generator import DEFAULT_CATEGORIES
 
 _CAT_HELP = (
     "Comma-separated categories "
@@ -31,6 +24,8 @@ def register(app: typer.Typer) -> None:
     @suite_app.command("list")
     def suite_list() -> None:
         """List local suites."""
+        from wiretap.paths import suites_dir
+
         d = suites_dir()
         if not d.is_dir():
             print(
@@ -49,11 +44,15 @@ def register(app: typer.Typer) -> None:
     @suite_app.command("path")
     def suite_path_cmd(name: str = typer.Argument("default")) -> None:
         """Print the filesystem path for a suite."""
+        from wiretap.paths import suite_path
+
         print(suite_path(name))
 
     @suite_app.command("show")
     def suite_show(name: str = typer.Argument("default")) -> None:
         """Print suite YAML."""
+        from wiretap.paths import suite_path
+
         path = suite_path(name)
         if not path.is_file():
             print(f"[red]Not found:[/red] {path}")
@@ -63,6 +62,8 @@ def register(app: typer.Typer) -> None:
     @suite_app.command("categories")
     def suite_categories() -> None:
         """List available test categories."""
+        from wiretap.services.generator import list_categories
+
         for c in list_categories():
             print(
                 f"[bold]{c['id']}[/bold]  {c['label']} — {c['description']} "
@@ -78,7 +79,11 @@ def register(app: typer.Typer) -> None:
         tests_per_category: int = typer.Option(5, "--tests-per-category", "-n", min=1, max=10),
         purpose: str = typer.Option("", "--purpose", "-p", help="Optional purpose context."),
     ) -> None:
-        """Regenerate scenarios for an existing suite from category templates."""
+        """Regenerate scenarios for an existing suite via LLM (category-guided)."""
+        from wiretap.paths import ensure_layout, suite_path
+        from wiretap.services.generator import fill_suite_scenarios, parse_categories
+        from wiretap.suite import dump_suite, load_suite
+
         path = suite_path(suite)
         if not path.is_file():
             print(f"[red]Not found:[/red] {path}")
@@ -86,12 +91,14 @@ def register(app: typer.Typer) -> None:
             raise typer.Exit(1)
         cfg = load_suite(path)
         cats = parse_categories(categories)
+        print(f"[cyan]Generating[/cyan] with LLM model {cfg.models.simulator}…")
         fill_suite_scenarios(
             cfg,
             categories=cats,
             tests_per_category=tests_per_category,
             purpose=purpose,
             agent_name=str(cfg.agent.agent_id or cfg.agent.platform or suite),
+            model=cfg.models.simulator,
         )
         ensure_layout()
         dump_suite(cfg, path)

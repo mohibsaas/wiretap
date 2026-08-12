@@ -7,18 +7,7 @@ import asyncio
 import typer
 from rich import print
 
-from wiretap.importers import (
-    import_bland_pathway,
-    import_retell_agent,
-    import_vapi_assistant,
-)
-from wiretap.paths import ensure_layout, graphs_dir, suite_path
-from wiretap.services.generator import (
-    DEFAULT_CATEGORIES,
-    fill_suite_scenarios,
-    parse_categories,
-)
-from wiretap.suite import dump_suite
+from wiretap.services.generator import DEFAULT_CATEGORIES
 
 _CAT_HELP = (
     "Comma-separated categories "
@@ -28,6 +17,9 @@ _CAT_HELP = (
 
 
 def _save_import(suite_name: str, suite, graph) -> None:
+    from wiretap.paths import ensure_layout, graphs_dir, suite_path
+    from wiretap.suite import dump_suite
+
     ensure_layout()
     path = suite_path(suite_name)
     dump_suite(suite, path)
@@ -51,12 +43,15 @@ def _maybe_generate(
 ) -> None:
     if smoke_only:
         return
+    from wiretap.services.generator import fill_suite_scenarios, parse_categories
+
     cats = parse_categories(categories)
     fill_suite_scenarios(
         suite,
         categories=cats,
         tests_per_category=tests_per_category,
         agent_name=str(suite.agent.agent_id or suite.agent.platform or "agent"),
+        model=suite.models.simulator,
     )
 
 
@@ -80,6 +75,8 @@ def register(app: typer.Typer) -> None:
         ),
     ) -> None:
         """Fetch Retell agent → suite + category tests."""
+        from wiretap.importers import import_retell_agent
+
         suite, graph = asyncio.run(import_retell_agent(agent_id))
         _maybe_generate(
             suite,
@@ -106,6 +103,8 @@ def register(app: typer.Typer) -> None:
         ),
     ) -> None:
         """Fetch Vapi assistant → suite + category tests."""
+        from wiretap.importers import import_vapi_assistant
+
         suite, graph = asyncio.run(import_vapi_assistant(assistant_id))
         _maybe_generate(
             suite,
@@ -128,6 +127,8 @@ def register(app: typer.Typer) -> None:
         ),
     ) -> None:
         """Fetch Bland pathway → suite + category tests."""
+        from wiretap.importers import import_bland_pathway
+
         suite, graph = asyncio.run(import_bland_pathway(pathway_id))
         _maybe_generate(
             suite,

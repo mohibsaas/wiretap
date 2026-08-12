@@ -87,6 +87,7 @@ class VapiWebSocketTransport(Transport):
         # naive resample skip — send as-is; Vapi expects 16k; OpenAI PCM is 24k
         # Downsample 24k→16k roughly by dropping samples
         pcm = _downsample_24k_to_16k(audio.pcm)
+        self._record(pcm, sample_rate=16_000)
         await self._ws.send(pcm)
 
     async def receive(self) -> Inbound:
@@ -108,6 +109,7 @@ class VapiWebSocketTransport(Transport):
         try:
             async for message in self._ws:
                 if isinstance(message, bytes):
+                    self._record(message, sample_rate=16_000)
                     self._audio_buf.extend(message)
                     if len(self._audio_buf) > 32_000:
                         stt = build_stt(self._stt_name)

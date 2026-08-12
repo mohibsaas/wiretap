@@ -68,17 +68,23 @@ def test_simulations_list_and_get(client: TestClient, tmp_path: Path) -> None:
     assert one.json()["scenario_id"] == "smoke"
 
 
-def test_start_batch_returns_id(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_simulate_scenario(suite, scenario, *, suite_id="default", cwd=None):
-        return SimulationArtifact(
+def test_start_batch_returns_id(client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    async def fake_simulate_scenario(
+        suite, scenario, *, suite_id="default", batch_id="", cwd=None
+    ):
+        art = SimulationArtifact(
             suite_id=suite_id,
+            batch_id=batch_id,
             scenario_id=scenario.id,
+            scenario_name=scenario.name,
             persona_id=scenario.persona_id,
             passed=True,
             transcript=[],
             judge=JudgeResult(passed=True, reason="ok", suggestions=[]),
             rules=RuleResult(passed=True),
         )
+        save_simulation(art, cwd or tmp_path)
+        return art
 
     monkeypatch.setattr(
         "wiretap.services.batches.simulate_scenario", fake_simulate_scenario
@@ -97,3 +103,13 @@ def test_start_batch_returns_id(client: TestClient, monkeypatch: pytest.MonkeyPa
             break
         time.sleep(0.05)
     assert status.json()["status"] == "completed"
+
+    runs = client.get("/api/evaluations")
+    assert runs.status_code == 200
+    assert any(r["batch_id"] == batch_id for r in runs.json())
+    detail = client.get(f"/api/evaluations/{batch_id}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["suite_id"] == "default"
+    assert body["total"] >= 1
+    assert len(body.get("simulations") or []) >= 1

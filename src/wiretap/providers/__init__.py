@@ -1,6 +1,5 @@
 from wiretap.providers.env import require_env
 from wiretap.providers.factory import build_stt, build_tts
-from wiretap.providers.llm import complete
 from wiretap.providers.speech import (
     AudioBuffer,
     SpeechToTextProvider,
@@ -21,3 +20,11 @@ __all__ = [
     "suggest_pyai_if_unconfigured",
     "synthesize_pcm",
 ]
+
+
+def __getattr__(name: str):
+    if name == "complete":
+        from wiretap.providers.llm import complete
+
+        return complete
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

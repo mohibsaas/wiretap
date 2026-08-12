@@ -28,6 +28,8 @@ class Persona(BaseModel):
     id: str
     identity: str
     goal: str
+    # Human-readable title for UI/CLI (prefer this over id)
+    name: str = ""
     personality: str = ""
     constraints: list[str] = Field(default_factory=list)
     knowledge: dict[str, Any] = Field(default_factory=dict)
@@ -121,15 +123,21 @@ class SimulationArtifact(BaseModel):
 
     simulation_id: str = ""
     created_at: str = ""
+    # Parent evaluation run (batch / suite execution)
+    batch_id: str = ""
     suite_id: str
     scenario_id: str
+    scenario_name: str = ""
     persona_id: str
+    persona_name: str = ""
     passed: bool
     transcript: list[TurnRecord]
     judge: JudgeResult
     rules: RuleResult
     metrics: dict[str, Any] = Field(default_factory=dict)
     meta: dict[str, Any] = Field(default_factory=dict)
+    # Relative to .wiretap/ when present (e.g. simulations/audio/<id>.wav)
+    audio_path: str | None = None
 
 
 __all__ = [

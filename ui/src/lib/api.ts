@@ -16,27 +16,49 @@ export type SuiteDetail = {
     agent_id?: string | null;
     token_env?: string | null;
   };
-  personas: { id: string; identity: string; goal: string }[];
+  personas: { id: string; name?: string; identity: string; goal: string }[];
   scenarios: {
     id: string;
     name: string;
     persona_id: string;
     max_turns: number;
     success_criteria: string;
+    category?: string | null;
   }[];
 };
 
 export type Simulation = {
   simulation_id: string;
   created_at: string;
+  batch_id?: string;
   suite_id: string;
   scenario_id: string;
+  scenario_name?: string;
   persona_id: string;
+  persona_name?: string;
   passed: boolean;
   transcript: { role: string; text: string }[];
   judge: { passed: boolean; reason: string; suggestions: string[] };
   rules: { passed: boolean; failures: string[] };
   meta: Record<string, unknown>;
+  audio_path?: string | null;
+};
+
+export type EvaluationRun = {
+  batch_id: string;
+  suite_id: string;
+  created_at?: string;
+  finished_at?: string | null;
+  status?: string;
+  error?: string | null;
+  scenario_ids?: string[];
+  simulation_ids?: string[];
+  passed: number;
+  failed: number;
+  inconclusive?: number;
+  total: number;
+  concurrency?: number;
+  simulations?: Simulation[];
 };
 
 export type Batch = {
@@ -81,6 +103,7 @@ export type CallerConfig = {
 
 export type OnboardStatus = {
   completed: boolean;
+  caller_configured?: boolean;
   needs_onboarding: boolean;
   has_llm_key: boolean;
   has_speech_key?: boolean;
@@ -100,12 +123,14 @@ export type OnboardStatus = {
 
 export type AgentRow = {
   id?: string;
+  agent_id?: string | null;
   suite?: string | null;
   platform?: string | null;
   transport?: string;
   name?: string;
   scenario_count?: number;
   connected?: boolean;
+  token_env?: string | null;
 };
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -176,6 +201,10 @@ export const client = {
   agents: () => api<AgentRow[]>("/api/agents"),
   suites: () => api<SuiteSummary[]>("/api/suites"),
   suite: (name: string) => api<SuiteDetail>(`/api/suites/${name}`),
+  evaluations: (limit = 40) =>
+    api<EvaluationRun[]>(`/api/evaluations?limit=${limit}`),
+  evaluation: (batchId: string) =>
+    api<EvaluationRun>(`/api/evaluations/${batchId}`),
   simulations: (limit = 40) =>
     api<Simulation[]>(`/api/simulations?limit=${limit}`),
   simulation: (id: string) => api<Simulation>(`/api/simulations/${id}`),
@@ -185,6 +214,10 @@ export const client = {
     scenario?: string | null;
     concurrency?: number;
     strict?: boolean;
+    agent_id?: string | null;
+    platform?: string | null;
+    token_env?: string | null;
+    agent_from?: string | null;
   }) =>
     api<{ batch_id: string }>("/api/batches", {
       method: "POST",

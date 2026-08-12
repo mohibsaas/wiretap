@@ -1,22 +1,11 @@
-"""Shared service layer for CLI, MCP, and local UI API."""
+"""Shared service layer for CLI, MCP, and local UI API.
 
-from wiretap.services.batches import BatchRecord, get_batch, start_batch
-from wiretap.services.generator import (
-    DEFAULT_CATEGORIES,
-    fill_suite_scenarios,
-    generate_suite,
-    list_categories,
-    parse_categories,
-)
-from wiretap.services.onboard import (
-    connect_agent,
-    generate_onboard_suite,
-    list_agents,
-    onboard_status,
-)
-from wiretap.services.secrets import key_status, upsert_secrets
-from wiretap.services.simulations import get_simulation_detail, list_simulations
-from wiretap.services.suites import get_suite, list_suites, suite_public_dict
+Keep this module light — do not eagerly import onboard/secrets (LiteLLM).
+"""
+
+from __future__ import annotations
+
+from typing import Any
 
 __all__ = [
     "BatchRecord",
@@ -39,3 +28,36 @@ __all__ = [
     "suite_public_dict",
     "upsert_secrets",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"DEFAULT_CATEGORIES", "fill_suite_scenarios", "generate_suite", "list_categories", "parse_categories"}:
+        from wiretap.services import generator as g
+
+        return getattr(g, name)
+    if name in {"BatchRecord", "get_batch", "start_batch"}:
+        from wiretap.services import batches as b
+
+        return getattr(b, name)
+    if name in {
+        "connect_agent",
+        "generate_onboard_suite",
+        "list_agents",
+        "onboard_status",
+    }:
+        from wiretap.services import onboard as o
+
+        return getattr(o, name)
+    if name in {"key_status", "upsert_secrets"}:
+        from wiretap.services import secrets as s
+
+        return getattr(s, name)
+    if name in {"get_simulation_detail", "list_simulations"}:
+        from wiretap.services import simulations as sim
+
+        return getattr(sim, name)
+    if name in {"get_suite", "list_suites", "suite_public_dict"}:
+        from wiretap.services import suites as su
+
+        return getattr(su, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

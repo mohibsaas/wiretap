@@ -1,7 +1,8 @@
-"""Onboarding + secrets + generator tests."""
+"""Onboarding + secrets + LLM generator tests."""
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -13,7 +14,23 @@ from wiretap.services.secrets import key_status, load_dotenv, upsert_secrets
 from wiretap.ui.app import create_app
 
 
-def test_categories_catalog_and_generate() -> None:
+def _fake_llm_tests(count: int, category: str) -> list[dict]:
+    out = []
+    for i in range(count):
+        out.append(
+            {
+                "name": f"{category.title()} case {i + 1}",
+                "identity": f"A caller for {category} scenario {i + 1}",
+                "goal": f"Complete {category} goal {i + 1}",
+                "say": f"Hello, this is {category} test {i + 1}.",
+                "success": f"Agent handles {category} case {i + 1} correctly.",
+                "excludes": [],
+            }
+        )
+    return out
+
+
+def test_categories_catalog_and_generate(monkeypatch: pytest.MonkeyPatch) -> None:
     cats = list_categories()
     ids = {c["id"] for c in cats}
     assert {
@@ -26,6 +43,26 @@ def test_categories_catalog_and_generate() -> None:
         "task",
         "other",
     } <= ids
+
+    def fake_complete(*, model, messages, temperature=0.4, max_tokens=512):
+        # Pull count from the user JSON payload
+        user = messages[-1]["content"]
+        count = 5
+        if "Generate exactly" in user:
+            # "Generate exactly N test cases"
+            try:
+                count = int(user.split("Generate exactly ", 1)[1].split(" ", 1)[0])
+            except (IndexError, ValueError):
+                count = 5
+        category = "emotional"
+        if '"category": "compliance"' in user or "category 'compliance'" in user:
+            category = "compliance"
+        elif '"category": "emotional"' in user:
+            category = "emotional"
+        return json.dumps(_fake_llm_tests(count, category))
+
+    monkeypatch.setattr("wiretap.services.generator.complete", fake_complete)
+
     suite = generate_suite(
         platform="custom",
         agent_id="x",
@@ -34,11 +71,14 @@ def test_categories_catalog_and_generate() -> None:
         categories=["emotional", "compliance"],
         tests_per_category=10,
         transport="text",
+        model="gpt-4o-mini",
     )
-    # Caps at available templates per category (8 emotional, 6 compliance)
-    assert len(suite.scenarios) == 14
+    assert len(suite.scenarios) == 20
     assert all(s.beats for s in suite.scenarios)
     assert {s.category for s in suite.scenarios} == {"emotional", "compliance"}
+    assert all(not s.persona_id.endswith("_persona") for s in suite.scenarios)
+    assert any(s.name.startswith("Emotional case") for s in suite.scenarios)
+    assert any(p.name.startswith("Emotional case") for p in suite.personas)
 
 
 def test_load_dotenv_fills_environ(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -69,8 +109,16 @@ def test_upsert_secrets_never_echoes(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert "sk-test-secret" not in res.text
 
 
-def test_onboard_generate_custom(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_onboard_generate_custom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
+
+    def fake_complete(*, model, messages, temperature=0.4, max_tokens=512):
+        return json.dumps(_fake_llm_tests(3, "compliance"))
+
+    monkeypatch.setattr("wiretap.services.generator.complete", fake_complete)
+
     client = TestClient(create_app(cwd=tmp_path))
     caller = client.post(
         "/api/onboard/caller",

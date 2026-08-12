@@ -28,10 +28,20 @@ cp .env.example .env   # API keys — never commit .env
 
 Core install includes LiteLLM, PyAI (default speech), LiveKit (Retell), and the local UI server.
 
+**Use `wiretap` on your PATH** (recommended while developing):
+
+```bash
+uv tool install --editable .
+wiretap --help
+```
+
+Or activate the project venv: `source .venv/bin/activate`, then `wiretap …`.  
+`uv run wiretap …` also works without activating — same binary, just via uv.
+
 Optional extras: `mcp` (MCP server), `dev` (pytest / ruff).
 
 ```bash
-uv sync --extra mcp    # then: uv run wiretap-mcp
+uv sync --extra mcp    # then: uv run wiretap-mcp   (or wiretap-mcp after tool install)
 uv sync --extra dev
 ```
 
@@ -41,9 +51,9 @@ uv sync --extra dev
 
 ### Known platforms (Vapi / Retell)
 
-Import pulls the live agent config, then **generates category-tagged tests**
-(defaults: `emotional`, `compliance`, `task` — 3 tests each). Not LLM-based;
-templates you can regenerate anytime.
+Import pulls the live agent config, then **generates category-tagged tests via LLM**
+(defaults: `emotional`, `compliance`, `task` — 3 tests each). Uses your configured
+simulator model (LiteLLM). Regenerate anytime with `wiretap suite generate`.
 
 ```bash
 # Vapi

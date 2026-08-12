@@ -217,6 +217,7 @@ def known_provider_ids(kind: str) -> set[str]:
 
 
 def managed_secret_keys() -> tuple[str, ...]:
+    """Env keys the UI may write — no LiteLLM import (keeps CLI fast)."""
     keys = {
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
@@ -224,10 +225,13 @@ def managed_secret_keys() -> tuple[str, ...]:
         "RETELL_API_KEY",
         "VAPI_API_KEY",
         "BLAND_API_KEY",
+        "PLAYHT_USER_ID",
     }
-    for p in (*llm_providers(), *stt_providers(), *tts_providers()):
-        if p.env.endswith("_API_KEY"):
-            keys.add(p.env)
+    keys.update(v for v in _ENV_ALIASES.values() if v.endswith("_API_KEY") or v.endswith("_KEY_ID"))
+    for pid in (*_SPEECH_STT, *_SPEECH_TTS, "pyai"):
+        env = env_for_provider(pid)
+        if env.endswith("_API_KEY"):
+            keys.add(env)
     return tuple(sorted(keys))
 
 

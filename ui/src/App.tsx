@@ -3,6 +3,7 @@ import { AppShell } from "@/components/AppShell";
 import { RequireOnboarded } from "@/components/RequireOnboarded";
 import { AgentsPage } from "@/pages/AgentsPage";
 import { BatchPage } from "@/pages/BatchPage";
+import { EvaluationRunPage } from "@/pages/EvaluationRunPage";
 import { EvaluationsPage } from "@/pages/EvaluationsPage";
 import { HomeRedirect } from "@/pages/HomeRedirect";
 import { OnboardGate } from "@/pages/OnboardGate";
@@ -24,8 +25,9 @@ export default function App() {
             <Route path="suites" element={<SuitesPage />} />
             <Route path="suites/:name" element={<SuiteDetailPage />} />
             <Route path="evaluations" element={<EvaluationsPage />} />
+            <Route path="evaluations/:batchId" element={<EvaluationRunPage />} />
             <Route
-              path="evaluations/:simulationId"
+              path="evaluations/:batchId/scenarios/:simulationId"
               element={<SimulationDetailPage />}
             />
             <Route path="simulations" element={<Navigate to="/evaluations" replace />} />

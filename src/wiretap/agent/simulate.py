@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 from wiretap.agent.orchestrator import build_orchestrator
@@ -16,6 +17,7 @@ from wiretap.models import (
 )
 from wiretap.providers.speech import suggest_pyai_if_unconfigured
 from wiretap.suite import latest_baseline, regression_failed, save_simulation
+from wiretap.suite.audio import CallRecorder, save_call_audio
 from wiretap.transport import build_transport
 
 
@@ -24,10 +26,15 @@ async def simulate_scenario(
     scenario: Scenario,
     *,
     suite_id: str = "default",
+    batch_id: str = "",
     cwd: Path | None = None,
 ) -> SimulationArtifact:
     persona = _persona(suite, scenario.persona_id)
     transport = build_transport(suite.agent)
+    recorder = CallRecorder(sample_rate=16_000)
+    attach = getattr(transport, "attach_recorder", None)
+    if callable(attach):
+        attach(recorder)
     configure = getattr(transport, "configure_speech", None)
     if callable(configure):
         configure(
@@ -75,6 +82,11 @@ async def simulate_scenario(
         await transport.hangup()
 
     orch_meta = orchestrator.describe()
+    simulation_id = uuid.uuid4().hex
+    audio_rel = save_call_audio(simulation_id, recorder, cwd)
+    persona_title = (persona.name or persona.identity or persona.id).strip()
+    scenario_title = (scenario.name or scenario.id).strip()
+
     violations = check_caller_contract(
         persona=persona,
         turns=transcript,
@@ -82,9 +94,13 @@ async def simulate_scenario(
     )
     if violations:
         artifact = SimulationArtifact(
+            simulation_id=simulation_id,
+            batch_id=batch_id,
             suite_id=suite_id,
             scenario_id=scenario.id,
+            scenario_name=scenario_title,
             persona_id=persona.id,
+            persona_name=persona_title,
             passed=False,
             transcript=transcript,
             judge=JudgeResult(
@@ -100,7 +116,10 @@ async def simulate_scenario(
                 "orchestrator": orch_meta,
                 "inconclusive": True,
                 "simulator_invalid": violations,
+                "agent_id": suite.agent.agent_id,
+                "platform": suite.agent.platform,
             },
+            audio_path=audio_rel,
         )
         save_simulation(artifact, cwd)
         return artifact
@@ -122,9 +141,13 @@ async def simulate_scenario(
         judge.suggestions = []
 
     artifact = SimulationArtifact(
+        simulation_id=simulation_id,
+        batch_id=batch_id,
         suite_id=suite_id,
         scenario_id=scenario.id,
+        scenario_name=scenario_title,
         persona_id=persona.id,
+        persona_name=persona_title,
         passed=passed,
         transcript=transcript,
         judge=judge,
@@ -133,7 +156,10 @@ async def simulate_scenario(
         meta={
             "transport": suite.agent.transport.value,
             "orchestrator": orch_meta,
+            "agent_id": suite.agent.agent_id,
+            "platform": suite.agent.platform,
         },
+        audio_path=audio_rel,
     )
     if regression_failed(artifact, baseline):
         artifact.meta["regression"] = True

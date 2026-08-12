@@ -22,7 +22,8 @@ from wiretap.providers.catalog import (
 )
 from wiretap.services.generator import generate_suite, list_categories, parse_categories
 from wiretap.services.secrets import key_status, upsert_secrets
-from wiretap.services.suites import list_suites
+from wiretap.services.suites import get_suite, list_suites
+from pydantic import ValidationError
 
 
 def onboard_state_path(cwd: Path | None = None) -> Path:
@@ -79,6 +80,7 @@ def onboard_status(cwd: Path | None = None) -> dict[str, Any]:
     )
     return {
         "completed": bool(state.get("completed")),
+        "caller_configured": bool(state.get("caller_configured")),
         "has_llm_key": has_llm,
         "has_speech_key": speech_ok,
         "has_platform_key": has_platform,
@@ -213,11 +215,13 @@ async def connect_agent(
 
     suite: SuiteConfig | None = None
     graph: AgentGraph | None = None
-    name = plat
+    # Unique per agent so adding another Retell/Vapi agent does not overwrite.
+    name = slug(f"{plat}_{agent_id or 'agent'}")[:48] or plat
 
     if plat == "custom":
         if not agent_id:
             agent_id = "custom"
+            name = slug("custom") or "custom"
         # Connect only stores state; generate writes the suite
         agent_name = agent_id
     else:
@@ -225,10 +229,8 @@ async def connect_agent(
             raise ValueError(f"{plat} requires agent_id")
         if plat == "retell":
             suite, graph = await import_retell_agent(agent_id)
-            name = "retell"
         elif plat == "vapi":
             suite, graph = await import_vapi_assistant(agent_id)
-            name = "vapi"
         else:
             raise ValueError(f"unsupported platform: {plat}")
         agent_name = suite.personas[0].identity if suite.personas else agent_id
@@ -245,7 +247,7 @@ async def connect_agent(
             "platform": plat,
             "agent_id": agent_id,
             "agent_name": agent_name,
-            "suite_name": name if plat != "custom" else None,
+            "suite_name": name,
             "connected": True,
         }
     )
@@ -293,6 +295,7 @@ def generate_onboard_suite(
         }
 
     cats = parse_categories(categories)
+    model = str(state.get("simulator_model") or "gpt-4o-mini")
     suite = generate_suite(
         platform=str(agent_kwargs["platform"]),
         agent_id=agent_kwargs.get("agent_id"),
@@ -301,6 +304,7 @@ def generate_onboard_suite(
         categories=cats,
         tests_per_category=tests_per_category,
         transport=str(agent_kwargs.get("transport") or "webrtc"),
+        model=model,
     )
     # Apply OUR test agent stack from onboarding
     suite.models.simulator = str(state.get("simulator_model") or suite.models.simulator)
@@ -345,17 +349,25 @@ def list_agents(cwd: Path | None = None) -> list[dict[str, Any]]:
     for s in list_suites(cwd):
         if s.get("error"):
             continue
-        key = f"{s.get('platform')}:{s.get('name')}"
+        try:
+            suite = get_suite(s["name"], cwd)
+        except (OSError, ValueError, TypeError, ValidationError):
+            continue
+        agent_id = suite.agent.agent_id
+        key = f"{suite.agent.platform}:{agent_id or s['name']}"
         if key in seen:
             continue
         seen.add(key)
         out.append(
             {
-                "id": s["name"],
+                "id": agent_id or s["name"],
+                "agent_id": agent_id,
                 "suite": s["name"],
-                "platform": s.get("platform"),
-                "transport": s.get("transport"),
+                "platform": suite.agent.platform,
+                "transport": suite.agent.transport.value,
+                "name": agent_id or s["name"],
                 "scenario_count": s.get("scenario_count"),
+                "token_env": suite.agent.token_env,
             }
         )
     state = load_onboard_state(cwd)
@@ -366,9 +378,10 @@ def list_agents(cwd: Path | None = None) -> list[dict[str, Any]]:
                 0,
                 {
                     "id": state.get("agent_id"),
+                    "agent_id": state.get("agent_id"),
                     "suite": state.get("suite_name"),
                     "platform": state.get("platform"),
-                    "name": state.get("agent_name"),
+                    "name": state.get("agent_name") or state.get("agent_id"),
                     "connected": True,
                 },
             )

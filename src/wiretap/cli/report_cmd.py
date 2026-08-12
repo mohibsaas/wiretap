@@ -22,8 +22,9 @@ def register(app: typer.Typer) -> None:
             raise typer.Exit(0)
         for art in sims:
             status = "PASS" if art.passed else "FAIL"
+            title = art.scenario_name or art.scenario_id
             print(
-                f"[{status}] {art.suite_id}/{art.scenario_id} — {art.judge.reason[:160]}"
+                f"[{status}] {art.suite_id}/{title} — {art.judge.reason[:160]}"
             )
             if not art.passed and art.judge.suggestions:
                 for s in art.judge.suggestions:

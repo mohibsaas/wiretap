@@ -31,6 +31,7 @@ def suite_from_prompt(
     goal = _guess_goal(system_prompt, agent_name)
     persona = Persona(
         id="imported_caller",
+        name=f"Caller for {agent_name}" if agent_name else "Imported caller",
         identity=f"A customer calling {agent_name or 'the agent'}",
         goal=goal,
         personality="clear and patient",

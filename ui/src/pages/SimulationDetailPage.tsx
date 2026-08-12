@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { client, type Simulation } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export function SimulationDetailPage() {
-  const { simulationId = "" } = useParams();
+  const { simulationId = "", batchId = "" } = useParams();
   const [sim, setSim] = useState<Simulation | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeTurn, setActiveTurn] = useState<number | null>(null);
 
   useEffect(() => {
     client
@@ -16,23 +17,41 @@ export function SimulationDetailPage() {
       .catch((e: Error) => setError(e.message));
   }, [simulationId]);
 
+  const title = useMemo(() => {
+    if (!sim) return "Scenario";
+    return sim.scenario_name || sim.scenario_id || "Scenario";
+  }, [sim]);
+
+  const audioSrc = sim?.audio_path
+    ? `/api/simulations/${simulationId}/audio`
+    : null;
+
+  const backTo = batchId
+    ? `/evaluations/${batchId}`
+    : sim?.batch_id
+      ? `/evaluations/${sim.batch_id}`
+      : "/evaluations";
+
   if (!sim && !error) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 ${audioSrc ? "pb-28" : ""}`}>
       <div>
         <Link
-          to="/evaluations"
+          to={backTo}
           className="text-xs text-muted-foreground hover:text-foreground"
         >
-          ← Evaluations
+          ← {batchId || sim?.batch_id ? "Evaluation run" : "Evaluations"}
         </Link>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">Simulation</h1>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight">{title}</h1>
         {sim && (
-          <p className="mt-1 font-mono text-sm text-muted-foreground">
-            {sim.suite_id}/{sim.scenario_id}
+          <p className="mt-1 text-sm text-muted-foreground">
+            {sim.suite_id}
+            {sim.persona_name ? ` · ${sim.persona_name}` : ""}
+            {sim.meta?.platform ? ` · ${String(sim.meta.platform)}` : ""}
+            {sim.meta?.agent_id ? ` · ${String(sim.meta.agent_id)}` : ""}
           </p>
         )}
       </div>
@@ -78,7 +97,12 @@ export function SimulationDetailPage() {
                 <p className="text-sm text-muted-foreground">Empty transcript.</p>
               )}
               {sim.transcript.map((t, i) => (
-                <div key={`${t.role}-${i}`} className="text-sm">
+                <div
+                  key={`${t.role}-${i}`}
+                  className={`text-sm transition-colors ${
+                    activeTurn === i ? "ring-1 ring-accent rounded-md" : ""
+                  }`}
+                >
                   <div className="mb-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     {t.role === "user" ? "caller" : "agent"}
                   </div>
@@ -88,6 +112,37 @@ export function SimulationDetailPage() {
             </CardContent>
           </Card>
         </>
+      )}
+
+      {audioSrc && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 backdrop-blur">
+          <div className="mx-auto flex max-w-3xl flex-col gap-2 px-4 py-3">
+            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span>Call audio</span>
+              <button
+                type="button"
+                className="underline-offset-2 hover:underline"
+                onClick={() => setActiveTurn(null)}
+              >
+                clear highlight
+              </button>
+            </div>
+            <audio
+              controls
+              className="w-full"
+              src={audioSrc}
+              onPlay={() => {
+                if (sim && sim.transcript.length > 0) setActiveTurn(0);
+              }}
+            >
+              <track kind="captions" />
+            </audio>
+            <p className="text-[11px] text-muted-foreground">
+              Transcript is above. Playback is the recorded call mix when the
+              transport captured audio (Vapi / Retell). Text dry-runs have no audio.
+            </p>
+          </div>
+        </div>
       )}
     </div>
   );

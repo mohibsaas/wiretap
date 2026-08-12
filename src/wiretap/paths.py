@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT_DIRNAME = ".wiretap"
 SUITES_DIRNAME = "suites"
 SIMULATIONS_DIRNAME = "simulations"
+EVALUATIONS_DIRNAME = "evaluations"
 # Legacy on-disk name (pre-rename); still read for back-compat
 RUNS_DIRNAME = "runs"
 GRAPHS_DIRNAME = "graphs"
@@ -24,6 +25,10 @@ def simulations_dir(cwd: Path | None = None) -> Path:
     return wiretap_root(cwd) / SIMULATIONS_DIRNAME
 
 
+def evaluations_dir(cwd: Path | None = None) -> Path:
+    return wiretap_root(cwd) / EVALUATIONS_DIRNAME
+
+
 def graphs_dir(cwd: Path | None = None) -> Path:
     return wiretap_root(cwd) / GRAPHS_DIRNAME
 
@@ -32,6 +37,7 @@ def ensure_layout(cwd: Path | None = None) -> Path:
     root = wiretap_root(cwd)
     (root / SUITES_DIRNAME).mkdir(parents=True, exist_ok=True)
     (root / SIMULATIONS_DIRNAME).mkdir(parents=True, exist_ok=True)
+    (root / EVALUATIONS_DIRNAME).mkdir(parents=True, exist_ok=True)
     (root / GRAPHS_DIRNAME).mkdir(parents=True, exist_ok=True)
     return root
 
@@ -61,12 +67,14 @@ def simulation_artifact_dirs(cwd: Path | None = None) -> list[Path]:
 
 
 __all__ = [
+    "EVALUATIONS_DIRNAME",
     "GRAPHS_DIRNAME",
     "ROOT_DIRNAME",
     "RUNS_DIRNAME",
     "SIMULATIONS_DIRNAME",
     "SUITES_DIRNAME",
     "ensure_layout",
+    "evaluations_dir",
     "graphs_dir",
     "simulation_artifact_dirs",
     "simulations_dir",

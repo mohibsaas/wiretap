@@ -60,7 +60,23 @@ class RetellTransport(Transport):
                 },
                 json={"agent_id": agent_id},
             )
-            resp.raise_for_status()
+            if resp.status_code == 403:
+                detail = ""
+                try:
+                    detail = str((resp.json() or {}).get("message") or resp.text)
+                except Exception:
+                    detail = resp.text
+                raise RuntimeError(
+                    "Retell create-web-call forbidden (403). "
+                    "Your RETELL_API_KEY needs the Testing.Write scope "
+                    "(Retell dashboard → API keys). "
+                    f"Details: {detail}"
+                )
+            if resp.is_error:
+                raise RuntimeError(
+                    f"Retell create-web-call failed ({resp.status_code}): "
+                    f"{resp.text[:300]}"
+                )
             payload = resp.json()
 
         access_token = payload.get("access_token")
@@ -76,7 +92,28 @@ class RetellTransport(Transport):
         def _on_data(data: rtc.DataPacket) -> None:
             self._handle_data(bytes(data.data))
 
-        await room.connect(RETELL_LIVEKIT_URL, access_token)
+        @room.on("track_subscribed")
+        def _on_track(
+            track: rtc.Track,
+            _publication: rtc.RemoteTrackPublication,
+            _participant: rtc.RemoteParticipant,
+        ) -> None:
+            if track.kind == rtc.TrackKind.KIND_AUDIO:
+                loop = self._loop
+                if loop and loop.is_running():
+                    loop.call_soon_threadsafe(
+                        lambda: asyncio.ensure_future(
+                            self._consume_remote_audio(track), loop=loop
+                        )
+                    )
+
+        try:
+            await asyncio.wait_for(room.connect(RETELL_LIVEKIT_URL, access_token), timeout=30.0)
+        except TimeoutError as exc:
+            raise RuntimeError(
+                "Timed out joining Retell LiveKit room (30s). "
+                "Check network / Retell status and retry."
+            ) from exc
 
         source = rtc.AudioSource(TTS_SAMPLE_RATE, 1)
         track = rtc.LocalAudioTrack.create_audio_track("microphone", source)
@@ -98,6 +135,7 @@ class RetellTransport(Transport):
         from livekit import rtc
 
         pcm = await synthesize_pcm(text, voice=self._voice or "alloy", provider=self._tts_name)
+        self._record(pcm, sample_rate=TTS_SAMPLE_RATE)
         # Push PCM16 as AudioFrames
         samples_per_channel = TTS_SAMPLE_RATE // 50  # 20ms frames
         offset = 0
@@ -136,6 +174,25 @@ class RetellTransport(Transport):
         self._audio_source = None
         if room is not None:
             await room.disconnect()
+
+    async def _consume_remote_audio(self, track: object) -> None:
+        """Best-effort capture of agent audio for evaluation playback."""
+        try:
+            from livekit import rtc
+        except ImportError:
+            return
+        if not isinstance(track, rtc.RemoteAudioTrack):
+            return
+        stream = rtc.AudioStream(track)
+        try:
+            async for event in stream:
+                if not self._connected:
+                    break
+                frame = event.frame
+                self._record(bytes(frame.data), sample_rate=frame.sample_rate)
+        except Exception:
+            # Recording must never break the call
+            return
 
     def _handle_data(self, raw: bytes) -> None:
         try:
