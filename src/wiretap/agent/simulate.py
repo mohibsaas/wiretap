@@ -23,6 +23,7 @@ from wiretap.providers.speech import suggest_pyai_if_unconfigured
 from wiretap.providers.tts import prefetch_pcm
 from wiretap.suite import latest_baseline, regression_failed, save_simulation
 from wiretap.suite.audio import CallRecorder, save_call_audio
+from wiretap.toolcalls import collect_tool_calls, tool_diff
 from wiretap.transport import build_transport
 from wiretap.transport.transcript_util import pick_judge_transcript
 
@@ -217,6 +218,13 @@ async def simulate_scenario(
     simulation_id = uuid.uuid4().hex
     _emit(on_progress, phase="judging", scenario=scenario, detail="checking rules + judge…")
     audio_rel = save_call_audio(simulation_id, recorder, cwd)
+    tool_calls, tool_capture = await collect_tool_calls(transport.call_ref(), suite.agent)
+    missing_tools, unexpected_tools = tool_diff(scenario.expected_tools, tool_calls)
+    tool_metrics: dict[str, Any] = {
+        "tool_calls": len(tool_calls),
+        "missing_tools": missing_tools,
+        "unexpected_tools": unexpected_tools,
+    }
     persona_title = (persona.name or persona.identity or persona.id).strip()
     scenario_title = (scenario.name or scenario.id).strip()
 
@@ -244,14 +252,16 @@ async def simulate_scenario(
             persona_name=persona_title,
             passed=False,
             transcript=transcript,
+            tool_calls=tool_calls,
             judge=JudgeResult(
                 passed=False,
                 reason=reason_prefix + "; ".join(violations),
                 suggestions=[],
             ),
             rules=run_rules(transcript, scenario.rules),
-            metrics={"turns": len(transcript)},
+            metrics={"turns": len(transcript), **tool_metrics},
             meta={
+                "tool_capture": tool_capture,
                 "transport": suite.agent.transport.value,
                 "orchestrator": orch_meta,
                 "inconclusive": True,
@@ -289,6 +299,9 @@ async def simulate_scenario(
         scenario_name=scenario_title,
         pass_threshold=pass_threshold,
         judge_config=suite.judge,
+        expected_tools=scenario.expected_tools,
+        tool_calls=tool_calls,
+        tool_capture=tool_capture,
     )
     # Deterministic rules can still fail a goal-pass.
     if not rules.passed and judge.passed:
@@ -304,6 +317,7 @@ async def simulate_scenario(
 
     meta: dict[str, Any] = {
         "transport": suite.agent.transport.value,
+        "tool_capture": tool_capture,
         "orchestrator": orch_meta,
         "agent_id": suite.agent.agent_id,
         "platform": suite.agent.platform,
@@ -331,9 +345,10 @@ async def simulate_scenario(
         persona_name=persona_title,
         passed=passed,
         transcript=transcript,
+        tool_calls=tool_calls,
         judge=judge,
         rules=rules,
-        metrics={"turns": len(transcript)},
+        metrics={"turns": len(transcript), **tool_metrics},
         meta=meta,
         audio_path=audio_rel,
     )

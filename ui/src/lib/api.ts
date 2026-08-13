@@ -58,6 +58,15 @@ export type JudgeMetric = {
   rationale?: string;
 };
 
+export type ToolCall = {
+  name: string;
+  arguments: Record<string, unknown>;
+  result_summary: string;
+  status: string;
+  turn_index: number | null;
+  at_seconds: number | null;
+};
+
 export type Simulation = {
   simulation_id: string;
   created_at: string;
@@ -74,6 +83,7 @@ export type Simulation = {
     start_ms?: number | null;
     end_ms?: number | null;
   }[];
+  tool_calls?: ToolCall[];
   judge: {
     passed: boolean;
     reason: string;
@@ -86,6 +96,7 @@ export type Simulation = {
     pass_mode?: string | null;
   };
   rules: { passed: boolean; failures: string[] };
+  metrics?: Record<string, unknown>;
   meta: Record<string, unknown>;
   audio_path?: string | null;
 };

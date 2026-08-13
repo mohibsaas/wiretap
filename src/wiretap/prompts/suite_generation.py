@@ -50,7 +50,7 @@ that contradict the brief.
 1. Output MUST be a single JSON array — no markdown fences, no commentary.
 2. Generate exactly the requested count of objects.
 3. Each object MUST use keys: name, identity, goal, say, success, excludes,
-   and optionally knowledge.
+   and optionally knowledge and expected_tools.
 4. name: short human title (≤ 8 words), unique within the batch.
 5. identity: who the caller is (one sentence, third person).
 6. goal: what the caller wants by end of call (observable outcome).
@@ -62,11 +62,17 @@ that contradict the brief.
 10. knowledge (optional object): fake caller facts the simulator may speak —
     include zip_code (5 digits) and callback_phone when intake is expected.
     Use clearly fake values only (e.g. 90210, 5551234567) — never real PII.
-11. Scenarios in one batch must differ in caller intent, pressure, or edge case —
+11. expected_tools: names of tools the live agent MUST invoke for this scenario
+    to count as handled. Copy names EXACTLY from agent_brief.tools — never invent
+    one, and never guess at a tool that is not listed there. Use [] when the
+    scenario needs no tool, when the caller is expected to abandon the call, or
+    when no agent_brief is provided. Prefer [] over a speculative guess: a tool
+    listed here is treated as a hard expectation by the judge.
+12. Scenarios in one batch must differ in caller intent, pressure, or edge case —
     not just reword the same plot.
-12. Prefer positive instructions in success ("Agent does X") over vague negatives.
-13. Never put API keys, tokens, passwords, or real PII in any field.
-14. Do not write scenarios that require the test agent to reveal it is a bot.
+13. Prefer positive instructions in success ("Agent does X") over vague negatives.
+14. Never put API keys, tokens, passwords, or real PII in any field.
+15. Do not write scenarios that require the test agent to reveal it is a bot.
 </rules>
 
 <field_schema>
@@ -82,7 +88,8 @@ that contradict the brief.
       "full_name": "string",
       "zip_code": "string",
       "callback_phone": "string"
-    }
+    },
+    "expected_tools": ["string"]
   }
 ]
 </field_schema>

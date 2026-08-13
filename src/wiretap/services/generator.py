@@ -144,7 +144,38 @@ def _says_stop_word(say: str, banned: list[str]) -> bool:
     return any(re.search(pattern, low) for pattern in _FAREWELL_PATTERNS)
 
 
-def _normalize_test(item: Any, *, category: str, index: int) -> dict[str, Any]:
+def _allowed_tools(brief: dict[str, Any] | None) -> set[str]:
+    """Tool names the agent actually has, per its imported graph."""
+    if not brief:
+        return set()
+    tools = brief.get("tools")
+    if not isinstance(tools, list):
+        return set()
+    out = set()
+    for tool in tools:
+        if isinstance(tool, dict):
+            name = str(tool.get("name") or "").strip()
+            if name:
+                out.add(name)
+    return out
+
+
+def _expected_tools(raw: Any, allowed: set[str]) -> list[str]:
+    """Keep only tools the agent really has — a hallucinated name would fail
+    every run against an expectation the agent could never satisfy."""
+    if not isinstance(raw, list) or not allowed:
+        return []
+    out: list[str] = []
+    for item in raw:
+        name = str(item).strip()
+        if name in allowed and name not in out:
+            out.append(name)
+    return out
+
+
+def _normalize_test(
+    item: Any, *, category: str, index: int, allowed_tools: set[str] | None = None
+) -> dict[str, Any]:
     if not isinstance(item, dict):
         raise ValueError(f"Test case {index} in {category} is not an object")
     name = str(item.get("name") or "").strip() or f"{category} scenario {index + 1}"
@@ -163,6 +194,9 @@ def _normalize_test(item: Any, *, category: str, index: int) -> dict[str, Any]:
         "say": say,
         "success": success,
         "excludes": excludes,
+        "expected_tools": _expected_tools(
+            item.get("expected_tools"), allowed_tools or set()
+        ),
     }
 
 
@@ -172,11 +206,17 @@ def _normalize_batch(
     category: str,
     banned: list[str],
     start_index: int = 0,
+    allowed_tools: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Normalize items, dropping any whose opening line would end the call."""
     out: list[dict[str, Any]] = []
     for offset, item in enumerate(items):
-        test = _normalize_test(item, category=category, index=start_index + offset)
+        test = _normalize_test(
+            item,
+            category=category,
+            index=start_index + offset,
+            allowed_tools=allowed_tools,
+        )
         if _says_stop_word(str(test["say"]), banned):
             continue
         out.append(test)
@@ -197,6 +237,7 @@ def llm_generate_category_tests(
     n = max(1, min(MAX_TESTS_PER_CATEGORY, count))
     examples = meta.get("examples") or []
     banned = end_call_phrases(brief)
+    allowed_tools = _allowed_tools(brief)
     context = suite_generation_context(
         agent_name=agent_name,
         purpose=purpose,
@@ -220,7 +261,10 @@ def llm_generate_category_tests(
         max_tokens=GENERATION_MAX_TOKENS,
     )
     out = _normalize_batch(
-        _extract_json_array(content), category=category, banned=banned
+        _extract_json_array(content),
+        category=category,
+        banned=banned,
+        allowed_tools=allowed_tools,
     )
     if len(out) < n:
         # Ask once more for the missing count rather than padding templates.
@@ -249,6 +293,7 @@ def llm_generate_category_tests(
                 category=category,
                 banned=banned,
                 start_index=len(out),
+                allowed_tools=allowed_tools,
             )
         )
     out = out[:n]
@@ -336,6 +381,7 @@ def generate_suite(
                     max_turns=10,
                     success_criteria=success,
                     rubric=DEFAULT_GENERATED_RUBRIC,
+                    expected_tools=list(t.get("expected_tools") or []),
                     rules=RuleCheck(excludes=list(t.get("excludes") or [])),
                     beats=[Beat(at_turn=1, say=t["say"])],
                     category=cat,

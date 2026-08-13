@@ -155,6 +155,53 @@ def test_purpose_suffixes_dropped_when_brief_present(
     assert "Align with purpose" not in suite.scenarios[0].success_criteria
 
 
+def test_expected_tools_filtered_to_the_brief(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hallucinated tool would create an expectation the agent can never meet."""
+    case = _test_case("A", "Hi, I need to book a cleaning.")
+    case["expected_tools"] = ["book_appointment", "wire_money", "book_appointment"]
+    fake = _Recorder([[case]])
+    monkeypatch.setattr("wiretap.services.generator.complete", fake)
+
+    out = llm_generate_category_tests(
+        category="task", count=1, agent_name="Clinic bot", brief=BRIEF
+    )
+
+    assert out[0]["expected_tools"] == ["book_appointment"]
+
+
+def test_expected_tools_empty_without_a_brief(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no tool list to validate against, nothing can be expected."""
+    case = _test_case("A", "Hi, I need help today.")
+    case["expected_tools"] = ["book_appointment"]
+    fake = _Recorder([[case]])
+    monkeypatch.setattr("wiretap.services.generator.complete", fake)
+
+    out = llm_generate_category_tests(category="task", count=1, agent_name="Bot")
+
+    assert out[0]["expected_tools"] == []
+
+
+def test_expected_tools_reach_the_generated_scenario(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _test_case("A", "Hi, I need to book a cleaning.")
+    case["expected_tools"] = ["book_appointment"]
+    fake = _Recorder([[case]])
+    monkeypatch.setattr("wiretap.services.generator.complete", fake)
+
+    suite = generate_suite(
+        platform="retell",
+        agent_id="agent_1",
+        agent_name="Clinic bot",
+        purpose="",
+        categories=["task"],
+        tests_per_category=1,
+        brief=BRIEF,
+    )
+
+    assert suite.scenarios[0].expected_tools == ["book_appointment"]
+
+
 def test_purpose_suffixes_kept_without_a_brief(monkeypatch: pytest.MonkeyPatch) -> None:
     """Purpose-only suites still lean on the suffixes for grounding."""
     fake = _Recorder([[_test_case("A", "Hi, I need help today.")]])

@@ -16,8 +16,8 @@ import httpx
 from wiretap.models import AgentTarget
 from wiretap.providers.env import require_env
 from wiretap.providers.tts import TTS_SAMPLE_RATE, synthesize_pcm
-from wiretap.transport.base import Inbound, Transport
 from wiretap.transport.audio_util import downsample_pcm16, pad_pcm16_silence
+from wiretap.transport.base import CallRef, Inbound, Transport
 from wiretap.transport.transcript_util import accept_final_utterance
 
 ELEVEN_API = "https://api.elevenlabs.io"
@@ -31,10 +31,16 @@ class ElevenLabsTransport(Transport):
     _tts_name: str = "pyai"
     _voice: str | None = "alloy"
     _seen: set[str] = field(default_factory=set)
+    _conversation_id: str | None = None
 
     def configure_speech(self, *, stt: str, tts: str, voice: str | None) -> None:
         self._tts_name = tts or self._tts_name
         self._voice = voice or self._voice
+
+    def call_ref(self) -> CallRef | None:
+        if not self._conversation_id:
+            return None
+        return CallRef(platform="elevenlabs", call_id=self._conversation_id)
 
     async def connect(self, target: AgentTarget) -> None:
         try:
@@ -124,6 +130,12 @@ class ElevenLabsTransport(Transport):
                 except json.JSONDecodeError:
                     continue
                 typ = data.get("type")
+                if typ == "conversation_initiation_metadata":
+                    evt = data.get("conversation_initiation_metadata_event") or {}
+                    conv = evt.get("conversation_id") or data.get("conversation_id")
+                    if conv:
+                        self._conversation_id = str(conv)
+                    continue
                 if typ == "ping":
                     ping = data.get("ping_event") or {}
                     event_id = ping.get("event_id")

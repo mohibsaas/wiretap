@@ -16,7 +16,7 @@ from wiretap.models import AgentTarget
 from wiretap.providers.env import require_env
 from wiretap.providers.factory import build_tts
 from wiretap.transport.audio_util import pad_pcm16_silence
-from wiretap.transport.base import Inbound, Transport
+from wiretap.transport.base import CallRef, Inbound, Transport
 from wiretap.transport.transcript_util import accept_final_utterance, is_vapi_final_transcript
 from wiretap.transport.turn_gate import (
     AgentTurnGate,
@@ -38,6 +38,7 @@ class VapiWebSocketTransport(Transport):
     _recv_task: asyncio.Task | None = None
     _gate: AgentTurnGate | None = None
     _seen_agent: set[str] = field(default_factory=set)
+    _call_id: str | None = None
 
     def configure_speech(self, *, stt: str, tts: str, voice: str | None) -> None:
         self._stt_name = stt
@@ -45,6 +46,9 @@ class VapiWebSocketTransport(Transport):
         self._voice = voice
         if self._gate is not None:
             self._gate.configure(stt=self._stt_name)
+
+    def call_ref(self) -> CallRef | None:
+        return CallRef(platform="vapi", call_id=self._call_id) if self._call_id else None
 
     async def connect(self, target: AgentTarget) -> None:
         try:
@@ -82,6 +86,7 @@ class VapiWebSocketTransport(Transport):
         ws_url = (data.get("transport") or {}).get("websocketCallUrl")
         if not ws_url:
             raise RuntimeError("Vapi call response missing transport.websocketCallUrl")
+        self._call_id = str(data.get("id") or "") or None
 
         self._gate = AgentTurnGate(
             stt_name=self._stt_name,

@@ -16,14 +16,14 @@ from wiretap.models import AgentTarget, TurnRecord
 from wiretap.providers.env import require_env
 from wiretap.providers.tts import TTS_SAMPLE_RATE, synthesize_pcm
 from wiretap.transport.audio_util import pad_pcm16_silence
-from wiretap.transport.base import Inbound, Transport
+from wiretap.transport.base import CallRef, Inbound, Transport
+from wiretap.transport.livekit_util import disconnect_livekit_room, schedule_on_loop
 from wiretap.transport.transcript_util import normalize_agent_text, utterance_timing_ms
 from wiretap.transport.turn_gate import (
     AgentTurnGate,
     receive_coalesced,
     speak_with_gate_mute,
 )
-from wiretap.transport.livekit_util import disconnect_livekit_room, schedule_on_loop
 
 RETELL_API = "https://api.retellai.com"
 RETELL_LIVEKIT_URL = "wss://retell-ai-4ihahnq7.livekit.cloud"
@@ -49,6 +49,9 @@ class RetellTransport(Transport):
         self._voice = voice or self._voice
         if self._gate is not None:
             self._gate.configure(stt=self._stt_name)
+
+    def call_ref(self) -> CallRef | None:
+        return CallRef(platform="retell", call_id=self._call_id) if self._call_id else None
 
     async def connect(self, target: AgentTarget) -> None:
         try:

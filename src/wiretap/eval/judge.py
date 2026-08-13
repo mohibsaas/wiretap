@@ -4,6 +4,8 @@ One completion returns a 0–1 match percentage. Wiretap maps bands:
   score < fail_below  → fail
   fail_below ≤ score < pass_at → partial
   score ≥ pass_at → pass
+
+When tool calls were observable, they are included as evidence in the prompt.
 """
 
 from __future__ import annotations
@@ -11,8 +13,9 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
+from wiretap.eval.tools import tool_report_text
 from wiretap.eval.transcript import transcript_text
-from wiretap.models import JudgeConfig, JudgeResult, TurnRecord
+from wiretap.models import JudgeConfig, JudgeResult, ToolCallRecord, TurnRecord
 from wiretap.prompts.judge import judge_call_prompt
 from wiretap.providers.llm import acomplete
 
@@ -31,6 +34,9 @@ async def judge_call(
     scenario_name: str = "",
     pass_threshold: float | None = None,
     judge_config: JudgeConfig | None = None,
+    expected_tools: list[str] | None = None,
+    tool_calls: list[ToolCallRecord] | None = None,
+    tool_capture: str = "unsupported",
 ) -> JudgeResult:
     base = judge_config or JudgeConfig()
     pass_at = _clamp(
@@ -49,6 +55,11 @@ async def judge_call(
         transcript=transcript_text(turns),
         fail_below=fail_below,
         pass_at=pass_at,
+        tool_report=tool_report_text(
+            expected=expected_tools or [],
+            actual=tool_calls or [],
+            capture=tool_capture,
+        ),
     )
     raw = await acomplete(
         model=model,

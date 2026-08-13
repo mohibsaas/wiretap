@@ -14,7 +14,7 @@ from rich.table import Table
 from rich.text import Text
 
 from wiretap.agent.events import SimEvent, truncate
-from wiretap.cli.style import ACCENT, ERR, MUTED, OK, WARN
+from wiretap.cli.style import ACCENT, ERR, MUTED, OK, WARN, tool_summary
 
 RowState = Literal[
     "queued",
@@ -311,6 +311,11 @@ def print_fail_details(art: Any, *, console: Console | None = None) -> None:
             line.append("  ✗ ", style=ERR)
             line.append(str(f))
             parts.append(line)
+
+    tools = tool_summary(art)
+    if tools:
+        parts.append(Text())
+        parts.append(Text(tools, style=MUTED))
 
     suggestions = list(getattr(judge, "suggestions", None) or []) if judge else []
     if suggestions:

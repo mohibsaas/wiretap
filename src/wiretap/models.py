@@ -48,6 +48,8 @@ class Scenario(BaseModel):
     max_turns: int = 20
     success_criteria: str
     rubric: str = ""
+    # Tool names the live agent must invoke to satisfy this scenario
+    expected_tools: list[str] = Field(default_factory=list)
     rules: RuleCheck = Field(default_factory=RuleCheck)
     beats: list[Beat] = Field(default_factory=list)
     # Optional multi-step phases: [{id, task, max_turns}]
@@ -148,6 +150,23 @@ class MetricScore(BaseModel):
     rationale: str = ""
 
 
+class ToolCallRecord(BaseModel):
+    """One tool invocation the live agent made, as reported by its platform.
+
+    Values are sanitized before they get here — they reach both disk and the
+    judge LLM. ``turn_index`` is best-effort: the platform transcript and the
+    transcript our transport observed do not align 1:1, so it positions a call
+    for display but is never a join key.
+    """
+
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    result_summary: str = ""
+    status: str = "unknown"  # ok | error | unknown
+    turn_index: int | None = None
+    at_seconds: float | None = None
+
+
 class JudgeResult(BaseModel):
     passed: bool
     score: float | None = None  # 0–1 goal match (UI shows as %)
@@ -179,6 +198,7 @@ class SimulationArtifact(BaseModel):
     persona_name: str = ""
     passed: bool
     transcript: list[TurnRecord]
+    tool_calls: list[ToolCallRecord] = Field(default_factory=list)
     judge: JudgeResult
     rules: RuleResult
     metrics: dict[str, Any] = Field(default_factory=dict)
@@ -204,6 +224,7 @@ __all__ = [
     "SimulationMode",
     "SpeechConfig",
     "SuiteConfig",
+    "ToolCallRecord",
     "TransportKind",
     "TurnRecord",
     "default_judge_metrics",
