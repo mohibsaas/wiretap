@@ -49,6 +49,10 @@ class SecretsBody(BaseModel):
     secrets: dict[str, str]
 
 
+class FromNumberBody(BaseModel):
+    from_number: str
+
+
 class ConnectBody(BaseModel):
     platform: str
     agent_id: str | None = None
@@ -124,6 +128,32 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         return {"updated": updated, "status": key_status(cwd)}
+
+    @app.get("/api/twilio/phone-numbers")
+    def api_twilio_numbers(limit: int = 20, contains: str | None = None) -> dict[str, Any]:
+        """Caller numbers on the user's Twilio account, plus the saved pick.
+
+        Paged: large accounts hold thousands of numbers, so callers search.
+        """
+        from wiretap.services.twilio_pstn import list_phone_numbers, saved_from_number
+
+        try:
+            numbers = list_phone_numbers(limit=max(1, min(limit, 100)), contains=contains)
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:  # surface Twilio SDK errors as 502, not a 500
+            raise HTTPException(502, f"Twilio lookup failed: {exc}") from exc
+        return {"numbers": numbers, "selected": saved_from_number(cwd)}
+
+    @app.post("/api/twilio/from-number")
+    def api_twilio_from_number(body: FromNumberBody) -> dict[str, Any]:
+        from wiretap.services.twilio_pstn import save_from_number
+
+        try:
+            selected = save_from_number(body.from_number, cwd)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"selected": selected}
 
     @app.get("/api/categories")
     def api_categories() -> list[dict[str, Any]]:

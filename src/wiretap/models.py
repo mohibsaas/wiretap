@@ -65,6 +65,8 @@ class AgentTarget(BaseModel):
     platform: str | None = None  # vapi|retell|elevenlabs|livekit|synthflow|bolna|bland|None
     agent_id: str | None = None
     room_url: str | None = None
+    # E.164 number to dial when transport is pstn
+    phone_number: str | None = None
     # Never put tokens in YAML — reference env var names only
     token_env: str | None = None
 

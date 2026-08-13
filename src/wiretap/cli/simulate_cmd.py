@@ -53,6 +53,21 @@ def register(app: typer.Typer) -> None:
             "--agent-from",
             help="Copy agent target from another local suite, then apply other overrides.",
         ),
+        transport: str | None = typer.Option(
+            None,
+            "--transport",
+            help="How to reach the agent: web or phone (skips the prompt).",
+        ),
+        phone: str | None = typer.Option(
+            None,
+            "--phone",
+            help="Agent phone number to dial, E.164 (skips the picker).",
+        ),
+        from_number: str | None = typer.Option(
+            None,
+            "--from-number",
+            help="Twilio caller number to dial from (skips the picker).",
+        ),
         timeout: float = typer.Option(
             DEFAULT_SCENARIO_TIMEOUT_S,
             "--timeout",
@@ -67,7 +82,14 @@ def register(app: typer.Typer) -> None:
         """
         from wiretap.agent import simulate_scenario
         from wiretap.agent.events import SimEvent
-        from wiretap.cli.prompts import ensure_caller_configured, ensure_platform_key
+        from wiretap.cli.prompts import (
+            choose_transport,
+            ensure_agent_number,
+            ensure_caller_configured,
+            ensure_platform_key,
+            ensure_pstn_configured,
+            require_pstn_extra,
+        )
         from wiretap.cli.sim_display import SimulateDisplay
         from wiretap.paths import suite_path
         from wiretap.suite import load_suite
@@ -93,6 +115,20 @@ def register(app: typer.Typer) -> None:
         plat = (cfg.agent.platform or "").lower().strip()
         if plat:
             ensure_platform_key(plat)
+        # Web or phone is decided per run, so the suite stays untouched.
+        # PSTN still needs the platform key above — post-call artifacts come
+        # from the platform, not from Twilio.
+        chosen = choose_transport(cfg, transport=transport)
+        if chosen == "pstn":
+            require_pstn_extra()
+            cfg = with_agent_override(
+                cfg,
+                transport="pstn",
+                phone_number=ensure_agent_number(cfg, phone=phone),
+            )
+            ensure_pstn_configured(from_number=from_number)
+        elif chosen != cfg.agent.transport.value:
+            cfg = with_agent_override(cfg, transport=chosen)
         if strict:
             cfg.mode.strict = True
             cfg.mode.temperature = 0.2
@@ -116,6 +152,10 @@ def register(app: typer.Typer) -> None:
         conc = max(1, concurrency)
         if cfg.agent.transport.value != "text":
             conc = min(conc, 2)
+        # One softphone: the SIP client binds a fixed port and registers a
+        # single shared credential, so a second concurrent call collides.
+        if cfg.agent.transport.value == "pstn":
+            conc = 1
 
         target = cfg.agent.agent_id or cfg.agent.platform or "local"
         plat = cfg.agent.platform or "local"

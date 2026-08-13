@@ -224,6 +224,10 @@ def managed_secret_keys() -> tuple[str, ...]:
         "SYNTHFLOW_FROM_NUMBER",
         "SYNTHFLOW_TO_NUMBER",
         "PLAYHT_USER_ID",
+        "TWILIO_ACCOUNT_SID",
+        "TWILIO_AUTH_TOKEN",
+        "TWILIO_SIP_PASSWORD",
+        "TWILIO_FROM_NUMBER",
     }
     keys.update(v for v in _ENV_ALIASES.values() if v.endswith("_API_KEY") or v.endswith("_KEY_ID"))
     for pid in (*_SPEECH_STT, *_SPEECH_TTS, "pyai"):

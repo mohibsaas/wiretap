@@ -55,9 +55,10 @@ wiretap --help
 Or activate the project venv: `source .venv/bin/activate`, then `wiretap …`.  
 `uv run wiretap …` also works without activating — same binary, just via uv.
 
-Optional extras: `mcp` (MCP server), `dev` (pytest / ruff).
+Optional extras: `pstn` (real phone calls), `mcp` (MCP server), `dev` (pytest / ruff).
 
 ```bash
+uv sync --extra pstn   # Twilio + SIP softphone, needed for `--transport phone`
 uv sync --extra mcp    # then: uv run wiretap-mcp   (or wiretap-mcp after tool install)
 uv sync --extra dev
 ```
@@ -73,6 +74,7 @@ wiretap init
 # 1) pick LLM + STT/TTS and paste keys (saved to .env only)
 # 2) optionally connect Retell/Vapi/…
 # 3) optionally generate a category suite
+# 4) optionally set up Twilio for real phone calls
 
 wiretap simulate -s <suite> --all
 wiretap report
@@ -134,6 +136,33 @@ imported suite stays grounded without another API call. Without a graph (a
 
 Same flow in the UI: connect agent → configure test agent → pick categories → generate.
 
+### Testing over a real phone call
+
+Web or phone is a **per-run choice**, so the same suite works both ways and the
+YAML never changes. `simulate` asks in a terminal, and flags skip the prompts:
+
+```bash
+uv sync --extra pstn
+uv run wiretap simulate --suite retell --all --transport phone
+# non-interactive: name both ends
+# uv run wiretap simulate -s retell --all --transport phone \
+#   --phone +14155550123 --from-number +14155550199
+```
+
+`--phone` is the agent's number; `--from-number` is the Twilio number you dial
+from. Left out, wiretap reads the numbers bound to your agent (Retell and Vapi)
+and offers them, then remembers the pick for that agent.
+
+Wiring is REST-only — no webhooks or tunnels. A local softphone registers to a
+SIP domain wiretap provisions on **your own** Twilio account, and Twilio bridges
+that leg to the agent's number. Set `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`
+(`wiretap init` step 4 prompts for both); `TWILIO_SIP_PASSWORD` is generated and
+rotated for you. Calls cost real Twilio money and run one at a time, since a
+single softphone answers them.
+
+Tool calls are still captured: the platform's own call id is recovered from
+Retell or Vapi after hangup. Other platforms report tools as unobservable.
+
 ### Any / custom agent
 
 Hand-write a suite under `~/.wiretap/suites/<name>.yaml` (or `wiretap export` a suite and edit it). Point `agent:` at how wiretap should reach them:
@@ -158,7 +187,9 @@ uv run wiretap simulate --suite <name> --all
 uv run wiretap report
 ```
 
-`platform: null` + `transport: text` is a local echo stub for dry-runs. Live custom SIP/phone is not available yet — use a supported platform endpoint, or text for offline checks.
+`platform: null` + `transport: text` is a local echo stub for dry-runs. To reach a
+custom agent for real, give it a phone number and run `simulate --transport phone`
+— that path only needs a dialable number, not a supported platform API.
 
 ### Day-to-day loop
 
@@ -174,7 +205,7 @@ import or edit suite  →  simulate (--all or --scenario)  →  report
 | --- | --- |
 | `wiretap import …` | Pull platform agent + generate category tests |
 | `wiretap suite …` | list / show / path / categories / generate |
-| `wiretap simulate` | Dial the live agent (`--all` or `--scenario <id>`) |
+| `wiretap simulate` | Dial the live agent (`--all` or `--scenario <id>`, `--transport web\|phone`) |
 | `wiretap report` | Summarize local simulation artifacts |
 | `wiretap export` | Copy a suite out for git or sharing |
 | `wiretap ui run` | Local dashboard at http://127.0.0.1:8787 |
@@ -233,8 +264,8 @@ Skipped/pending/running in a results grid are **run states**, not generation cat
 | LiveKit Agents | LiveKit room | `agent_id` = room name, `room_url` = `wss://…`; `LIVEKIT_API_KEY` + `LIVEKIT_API_SECRET` (or `LIVEKIT_TOKEN`) |
 | Synthflow | WS media | `SYNTHFLOW_API_KEY` + `SYNTHFLOW_FROM_NUMBER` / `SYNTHFLOW_TO_NUMBER` |
 | Custom / stub | Text | Local dry-run (`platform: null`) |
-| Bland / Bolna | Import only | Live phone dial not available yet |
-| Phone / SIP | — | Not available yet |
+| Bland / Bolna | Import only | No platform dial; reachable via `--transport phone` |
+| Phone / PSTN | Twilio SIP bridge | Any platform, `uv sync --extra pstn` + `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` |
 
 ---
 

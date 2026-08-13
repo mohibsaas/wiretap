@@ -44,7 +44,7 @@ def register(app: typer.Typer) -> None:
             5, "--tests-per-category", "-n", min=1, max=10
         ),
     ) -> None:
-        """Interactive first-run setup (test agent → optional live agent → suite).
+        """Interactive first-run setup (test agent → live agent → suite → phone).
 
         Writes API keys to .env only. Same services as the UI onboarding flow.
         """
@@ -77,7 +77,7 @@ def register(app: typer.Typer) -> None:
         # Step 1 — test agent
         ui.step(
             1,
-            3,
+            4,
             "Test agent",
             detail="LLM + STT/TTS used by the simulated caller",
         )
@@ -98,7 +98,7 @@ def register(app: typer.Typer) -> None:
         # Step 2 — live agent
         ui.step(
             2,
-            3,
+            4,
             "Live agent",
             detail="Import a production voice agent to dial during simulate",
         )
@@ -172,11 +172,12 @@ def register(app: typer.Typer) -> None:
         # Step 3 — generate suite
         ui.step(
             3,
-            3,
+            4,
             "Test suite",
             detail="Category scenarios for the connected agent",
         )
         if not typer.confirm("Generate category test suite now?", default=True):
+            _phone_step(result.get("suite_name"))
             print_status()
             ui.next_cmd(
                 f'wiretap suite generate -s {result.get("suite_name")} -p "…"'
@@ -214,5 +215,49 @@ def register(app: typer.Typer) -> None:
                 ui.print_suite_view(load_suite(sp), name=str(suite_name), path=str(sp))
         except Exception:
             pass
+
+        dialing = _phone_step(suite_name)
         print_status()
-        ui.next_cmd(f"wiretap simulate -s {suite_name} --all", hint="Run")
+        run = f"wiretap simulate -s {suite_name} --all"
+        ui.next_cmd(f"{run} --transport phone" if dialing else run, hint="Run")
+
+
+def _phone_step(suite_name: object) -> bool:
+    """Step 4 — optional Twilio setup so ``simulate`` can place a real call.
+
+    Everything before this already saved, so a decline (or a missing extra) is
+    a warning rather than a failed init.
+    """
+    from wiretap.cli.prompts import (
+        ensure_agent_number,
+        ensure_pstn_configured,
+        require_pstn_extra,
+    )
+    from wiretap.paths import suite_path
+    from wiretap.suite import load_suite
+
+    ui.step(
+        4,
+        4,
+        "Phone testing",
+        detail="Optional — dial the agent's real number instead of the web",
+    )
+    if not typer.confirm("Test this agent over a real phone call?", default=False):
+        ui.muted("Skipped — wiretap simulate --transport phone sets this up later.")
+        return False
+
+    path = suite_path(str(suite_name or ""))
+    try:
+        require_pstn_extra()
+        ensure_pstn_configured()
+        number = ensure_agent_number(load_suite(path)) if path.is_file() else ""
+    except typer.Exit:
+        ui.warn("Phone testing not configured — retry with simulate --transport phone.")
+        return False
+    except (ValueError, RuntimeError, OSError) as exc:
+        ui.warn(f"Phone testing not configured: {exc}")
+        return False
+
+    if number:
+        ui.ok(f"Phone testing ready — dialing [bold]{number}[/bold]")
+    return bool(number)

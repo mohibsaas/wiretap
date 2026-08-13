@@ -88,6 +88,7 @@ def test_generate_new_suite_agent_from(
             transport=TransportKind.WEBRTC,
             platform="retell",
             agent_id="agent_abc",
+            phone_number="+14155550123",
             token_env="RETELL_API_KEY",
         ),
         personas=[],
@@ -117,6 +118,8 @@ def test_generate_new_suite_agent_from(
     assert suite.agent.platform == "retell"
     assert suite.agent.agent_id == "agent_abc"
     assert suite.agent.token_env == "RETELL_API_KEY"
+    # Dropping this would silently make the rebound suite undialable by phone.
+    assert suite.agent.phone_number == "+14155550123"
     assert len(suite.scenarios) == 1
 
 

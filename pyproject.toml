@@ -23,6 +23,13 @@ dependencies = [
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.0.0"]
+# PSTN dialing over Twilio. audioop was removed from the stdlib in 3.13 and
+# pyVoIP still imports it.
+pstn = [
+  "twilio>=9.0",
+  "pyVoIP>=1.6.8",
+  "audioop-lts>=0.2; python_version >= '3.13'",
+]
 dev = ["pytest>=8.0", "ruff>=0.6", "respx>=0.21"]
 
 [project.scripts]

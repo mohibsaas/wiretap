@@ -6,12 +6,15 @@ Reuse onboard services; never echo secret values.
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich import print
 
 from wiretap.cli import style as ui
+from wiretap.models import TransportKind
 from wiretap.providers.catalog import (
     env_for_provider,
     llm_providers,
@@ -32,6 +35,13 @@ PLATFORM_API_KEYS: dict[str, str] = {
     "bolna": "BOLNA_API_KEY",
     "livekit": "LIVEKIT_API_KEY",
 }
+
+# Distribution packages installed by the optional ``pstn`` extra.
+PSTN_PACKAGES = ("twilio", "pyVoIP")
+
+# The run-time question is "web or phone", not a transport-kind quiz.
+_PHONE_WORDS = {"phone", "pstn", "call", "dial"}
+_WEB_WORDS = {"web", "online", "webrtc"}
 
 
 def is_interactive() -> bool:
@@ -106,6 +116,254 @@ def ensure_platform_key(
                 cwd=cwd,
                 api_key=api_secret,
             )
+
+
+def ensure_pstn_configured(
+    *,
+    cwd: Path | None = None,
+    from_number: str | None = None,
+) -> str:
+    """Twilio credentials + caller number for a ``transport: pstn`` suite.
+
+    Resolution order: explicit flag, TWILIO_FROM_NUMBER, previously saved choice,
+    then an interactive pick from the account's own numbers.
+    """
+    from wiretap.services.twilio_pstn import (
+        ACCOUNT_SID_ENV,
+        AUTH_TOKEN_ENV,
+        list_phone_numbers,
+        resolve_from_number,
+        save_from_number,
+    )
+
+    ensure_env_key(ACCOUNT_SID_ENV, label="Twilio Account SID", cwd=cwd)
+    ensure_env_key(AUTH_TOKEN_ENV, label="Twilio auth token", cwd=cwd)
+
+    chosen = (from_number or "").strip() or resolve_from_number(cwd)
+    if not chosen:
+        chosen = _pick_twilio_number(list_phone_numbers)
+    try:
+        saved = save_from_number(chosen, cwd)
+    except ValueError as exc:
+        ui.err(str(exc))
+        raise typer.Exit(1) from exc
+    ui.ok(f"Dialing from [bold]{saved}[/bold]")
+    return saved
+
+
+def _pick_twilio_number(fetch: Callable[..., list[dict[str, str]]]) -> str:
+    """Show a page of numbers; large accounts search instead of scrolling."""
+    from wiretap.services.twilio_pstn import NUMBER_PAGE_SIZE
+
+    if not is_interactive():
+        ui.err("No Twilio caller number selected.")
+        ui.muted("Pass --from-number +1…, or set TWILIO_FROM_NUMBER in .env.")
+        raise typer.Exit(1)
+
+    contains: str | None = None
+    while True:
+        with ui.spinner("Loading Twilio phone numbers…"):
+            try:
+                numbers = fetch(limit=NUMBER_PAGE_SIZE, contains=contains)
+            except RuntimeError as exc:
+                ui.err(str(exc))
+                raise typer.Exit(1) from exc
+
+        if not numbers:
+            if contains:
+                ui.warn(f"No numbers matching {contains!r}.")
+                contains = None
+                continue
+            ui.err("No phone numbers on this Twilio account.")
+            ui.muted("Buy one in the Twilio console, then re-run.")
+            raise typer.Exit(1)
+
+        ui.info("Pick the number the test agent should call from")
+        for index, entry in enumerate(numbers, 1):
+            label = entry.get("friendly_name") or "—"
+            print(
+                f"  [bold {ui.ACCENT}]{index}[/bold {ui.ACCENT}]. "
+                f"{entry['phone_number']}  [{ui.MUTED}]{label}[/{ui.MUTED}]"
+            )
+        if len(numbers) >= NUMBER_PAGE_SIZE:
+            ui.muted(
+                f"Showing {NUMBER_PAGE_SIZE} of your numbers — "
+                "type part of a number to search."
+            )
+
+        raw = typer.prompt("Caller number (index, +E.164, or search)", default="1").strip()
+        if raw.isdigit() and 1 <= int(raw) <= len(numbers):
+            return numbers[int(raw) - 1]["phone_number"]
+        if raw.startswith("+"):
+            return raw
+        contains = raw
+
+
+def require_pstn_extra() -> None:
+    """Stop before any prompting when the optional phone dependencies are absent.
+
+    Discovering this mid-dial wastes the setup the user just walked through.
+    """
+    from importlib.util import find_spec
+
+    missing = [name for name in PSTN_PACKAGES if find_spec(name) is None]
+    if not missing:
+        return
+    ui.err(f"Phone testing needs the pstn extra — {', '.join(missing)} not installed.")
+    ui.muted("Install it with: uv sync --extra pstn")
+    raise typer.Exit(1)
+
+
+def choose_transport(suite: Any, *, transport: str | None = None) -> str:
+    """Decide how this run reaches the agent, returning a transport kind.
+
+    Phone is a per-run choice rather than a suite property, so the suite's own
+    transport is only the default. Non-interactive runs keep that default so
+    CI never blocks on a prompt.
+    """
+    current = suite.agent.transport.value
+    if transport is not None and str(transport).strip():
+        return _resolve_transport(str(transport), current=current)
+    if not is_interactive():
+        return current
+
+    ui.info("Reach the agent over the web, or place a real phone call")
+    choice = _pick("Transport", ["web", "phone"], default=_transport_word(current))
+    return _resolve_transport(choice, current=current)
+
+
+def _transport_word(kind: str) -> str:
+    return "phone" if kind == "pstn" else "web"
+
+
+def _resolve_transport(raw: str, *, current: str) -> str:
+    """Map a user's word (or a literal transport kind) onto a TransportKind."""
+    value = raw.strip().lower()
+    if value in _PHONE_WORDS:
+        return TransportKind.PSTN.value
+    if value in _WEB_WORDS:
+        # "web" means "however this suite normally connects", unless that is
+        # itself the phone — then there is nothing to fall back to but webrtc.
+        return TransportKind.WEBRTC.value if current == "pstn" else current
+    try:
+        return TransportKind(value).value
+    except ValueError:
+        ui.err(f"Unknown transport {raw!r}.")
+        ui.muted("Use web or phone (or a transport kind: text, webrtc, sip, pstn).")
+        raise typer.Exit(1) from None
+
+
+def ensure_agent_number(
+    suite: Any,
+    *,
+    phone: str | None = None,
+    cwd: Path | None = None,
+) -> str:
+    """The agent's own phone number to dial for this run.
+
+    Resolution order: explicit flag, the suite's declared target, the pick
+    remembered for this agent, then a picker built from the platform's numbers.
+    """
+    from wiretap.services.agent_numbers import save_agent_number, saved_agent_number
+
+    platform = suite.agent.platform
+    agent_id = suite.agent.agent_id
+
+    chosen = (phone or "").strip() or (suite.agent.phone_number or "").strip()
+    if not chosen:
+        chosen = (
+            saved_agent_number(platform=platform, agent_id=agent_id, cwd=cwd) or ""
+        )
+    if not chosen:
+        chosen = _pick_agent_number(
+            platform=platform,
+            agent_id=agent_id,
+            token_env=suite.agent.token_env,
+        )
+
+    try:
+        return save_agent_number(chosen, platform=platform, agent_id=agent_id, cwd=cwd)
+    except ValueError as exc:
+        ui.err(str(exc))
+        raise typer.Exit(1) from exc
+
+
+def _pick_agent_number(
+    *,
+    platform: str | None,
+    agent_id: str | None,
+    token_env: str | None,
+) -> str:
+    """Offer the numbers the platform routes to this agent, else ask outright."""
+    if not is_interactive():
+        ui.err("No phone number known for this agent.")
+        ui.muted("Pass --phone +1…, or run wiretap simulate in a terminal to pick one.")
+        raise typer.Exit(1)
+
+    numbers = _discover_agent_numbers(
+        platform=platform, agent_id=agent_id, token_env=token_env
+    )
+    if not numbers:
+        ui.warn(f"Could not read phone numbers from {platform or 'the platform'}.")
+        raw = typer.prompt("Agent phone number (+E.164)").strip()
+        if not raw:
+            ui.err("Aborted — a number is required to place the call")
+            raise typer.Exit(1)
+        return raw
+
+    ui.info(f"Pick the number that reaches {agent_id or 'this agent'}")
+    for index, entry in enumerate(numbers, 1):
+        label = entry.label or "—"
+        marker = "  ← this agent" if entry.bound else ""
+        print(
+            f"  [bold {ui.ACCENT}]{index}[/bold {ui.ACCENT}]. "
+            f"{entry.number}  [{ui.MUTED}]{label}{marker}[/{ui.MUTED}]"
+        )
+
+    raw = typer.prompt("Agent number (index or +E.164)", default="1").strip()
+    if raw.isdigit() and 1 <= int(raw) <= len(numbers):
+        return numbers[int(raw) - 1].number
+    return raw
+
+
+def _discover_agent_numbers(
+    *,
+    platform: str | None,
+    agent_id: str | None,
+    token_env: str | None,
+) -> list[Any]:
+    import asyncio
+
+    from wiretap.services.agent_numbers import (
+        DISCOVERABLE_PLATFORMS,
+        discover_agent_numbers,
+    )
+
+    name = (platform or "").lower().strip()
+    if name not in DISCOVERABLE_PLATFORMS:
+        return []
+    api_key = _platform_api_key(platform=name, token_env=token_env)
+    if not api_key:
+        return []
+    with ui.spinner(f"Loading {name} phone numbers…"):
+        return asyncio.run(
+            discover_agent_numbers(
+                platform=name, agent_id=agent_id, api_key=api_key
+            )
+        )
+
+
+def _platform_api_key(*, platform: str, token_env: str | None) -> str:
+    """The platform key already in the secret store, or '' when unavailable."""
+    from wiretap.providers.env import require_env
+
+    env_name = (token_env or "").strip() or PLATFORM_API_KEYS.get(platform, "")
+    if not env_name:
+        return ""
+    try:
+        return require_env(env_name)
+    except RuntimeError:
+        return ""
 
 
 def ensure_caller_configured(
@@ -249,6 +507,43 @@ def _pick(label: str, choices: list[str], *, default: str) -> str:
     return raw
 
 
+def _phone_rows(cwd: Path | None = None) -> list[tuple[str, Any]]:
+    """Whether `simulate --transport phone` could place a call right now."""
+    from importlib.util import find_spec
+
+    from rich.text import Text
+
+    from wiretap.services.secrets import key_status
+    from wiretap.services.twilio_pstn import (
+        ACCOUNT_SID_ENV,
+        AUTH_TOKEN_ENV,
+        resolve_from_number,
+    )
+
+    keys = key_status(cwd)
+    credentials = bool(keys.get(ACCOUNT_SID_ENV) and keys.get(AUTH_TOKEN_ENV))
+    extra = all(find_spec(name) is not None for name in PSTN_PACKAGES)
+    number = resolve_from_number(cwd) or ""
+
+    if credentials and extra and number:
+        state = Text("ready", style=f"bold {ui.OK}")
+    else:
+        missing = []
+        if not extra:
+            missing.append("uv sync --extra pstn")
+        if not credentials:
+            missing.append("Twilio keys")
+        if not number:
+            missing.append("caller number")
+        state = Text("not configured", style=f"bold {ui.WARN}")
+        state.append(f"  ({' · '.join(missing)})", style=ui.MUTED)
+
+    rows: list[tuple[str, Any]] = [("Phone", state)]
+    if number:
+        rows.append(("Caller number", Text(number, style=ui.ACCENT)))
+    return rows
+
+
 def print_status(*, cwd: Path | None = None) -> None:
     """Show configuration status without secret values."""
     from rich.text import Text
@@ -293,6 +588,7 @@ def print_status(*, cwd: Path | None = None) -> None:
         ("Suite", val(status.get("suite_name"))),
         ("Suites on disk", val(status.get("suite_count") or 0, empty="0")),
     ]
+    rows.extend(_phone_rows(cwd))
     ui.console.print()
     ui.status_table(rows=rows)
 
@@ -364,11 +660,16 @@ def print_status(*, cwd: Path | None = None) -> None:
 
 __all__ = [
     "PLATFORM_API_KEYS",
+    "PSTN_PACKAGES",
+    "choose_transport",
     "configure_caller_interactive",
+    "ensure_agent_number",
     "ensure_caller_configured",
     "ensure_env_key",
     "ensure_platform_key",
+    "ensure_pstn_configured",
     "is_interactive",
     "print_status",
     "require_interactive",
+    "require_pstn_extra",
 ]

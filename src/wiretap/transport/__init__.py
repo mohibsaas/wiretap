@@ -19,6 +19,13 @@ def build_transport(target: AgentTarget) -> Transport:
     kind = target.transport
     platform = (target.platform or "").lower().strip()
 
+    # PSTN dials a phone number, so it works for any platform — the platform is
+    # only used afterwards, to fetch post-call artifacts.
+    if kind == TransportKind.PSTN:
+        from wiretap.transport.twilio_pstn import TwilioPstnTransport
+
+        return TwilioPstnTransport()
+
     # No platform → local stub (CI / dry-run)
     if not platform:
         return TextEchoTransport()

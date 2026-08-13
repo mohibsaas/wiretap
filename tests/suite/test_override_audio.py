@@ -47,6 +47,17 @@ def test_with_agent_override_fields() -> None:
     assert suite.agent.agent_id == "agent-a"  # original untouched
 
 
+def test_a_run_can_be_moved_onto_the_phone_without_touching_the_suite() -> None:
+    suite = _minimal_suite("agent-a")
+
+    out = with_agent_override(suite, transport="pstn", phone_number=" +14155550123 ")
+
+    assert out.agent.transport is TransportKind.PSTN
+    assert out.agent.phone_number == "+14155550123"
+    assert suite.agent.transport is TransportKind.WEBRTC
+    assert suite.agent.phone_number is None
+
+
 def test_with_agent_from_suite(tmp_path: Path) -> None:
     a = _minimal_suite("agent-a", "retell")
     b = _minimal_suite("agent-b", "vapi")
