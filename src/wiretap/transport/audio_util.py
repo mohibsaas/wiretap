@@ -42,3 +42,40 @@ def pcm16be_to_le(pcm_be: bytes) -> bytes:
         (sample,) = struct.unpack_from(">h", pcm_be, i)
         struct.pack_into("<h", out, i, sample)
     return bytes(out)
+
+
+def silence_pcm16(duration_s: float, *, sample_rate: int) -> bytes:
+    """Zero PCM16 mono for ``duration_s`` seconds."""
+    if duration_s <= 0 or sample_rate <= 0:
+        return b""
+    n = int(sample_rate * duration_s)
+    return b"\x00\x00" * max(0, n)
+
+
+def pad_pcm16_silence(
+    pcm: bytes,
+    *,
+    sample_rate: int,
+    lead_s: float = 0.08,
+    trail_s: float = 0.15,
+) -> bytes:
+    """Pad leading/trailing silence so remote VADs reliably detect caller speech.
+
+    Provider-agnostic helper for Retell/LiveKit/Vapi/Synthflow/ElevenLabs publish.
+    """
+    if not pcm:
+        return pcm
+    return (
+        silence_pcm16(lead_s, sample_rate=sample_rate)
+        + pcm
+        + silence_pcm16(trail_s, sample_rate=sample_rate)
+    )
+
+
+__all__ = [
+    "downsample_pcm16",
+    "pad_pcm16_silence",
+    "pcm16be_to_le",
+    "pcm16le_to_be",
+    "silence_pcm16",
+]

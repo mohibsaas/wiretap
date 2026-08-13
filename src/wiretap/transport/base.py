@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 class Inbound:
     text: str | None = None
     hung_up: bool = False
+    # CallRecorder timeline offsets for this agent utterance (when known).
+    start_ms: float | None = None
+    end_ms: float | None = None
 
 
 class Transport(ABC):
@@ -24,6 +27,15 @@ class Transport(ABC):
     def attach_recorder(self, recorder: CallRecorder | None) -> None:
         """Optional: capture mixed call PCM for evaluation playback."""
         self._recorder = recorder
+        self._sync_gate_elapsed()
+
+    def _sync_gate_elapsed(self) -> None:
+        gate = getattr(self, "_gate", None)
+        setter = getattr(gate, "set_elapsed_ms_fn", None) if gate is not None else None
+        if not callable(setter):
+            return
+        rec = self._recorder
+        setter(rec.elapsed_ms if rec is not None else None)
 
     def _record(self, pcm: bytes, *, sample_rate: int = 16_000) -> None:
         if self._recorder is not None and pcm:

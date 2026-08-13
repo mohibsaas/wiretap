@@ -35,6 +35,7 @@ from wiretap.prompts.defaults import (
     DEFAULT_SUCCESS_CRITERIA,
     DO_NOT_REVEAL_TEST_BOT,
 )
+from wiretap.prompts.caller_knowledge import enrich_persona_knowledge
 from wiretap.prompts.suite_generation import (
     SUITE_GENERATION_SYSTEM,
     suite_generation_context,
@@ -57,7 +58,6 @@ _FAREWELL_PATTERNS = (
 )
 
 ProgressCallback = Callable[[dict[str, Any]], None]
-
 
 def list_categories() -> list[dict[str, Any]]:
     out = []
@@ -322,6 +322,7 @@ def generate_suite(
                     + (f" Context: {purpose_bit}" if staple_purpose else ""),
                     personality=DEFAULT_PERSONA_PERSONALITY,
                     constraints=[DO_NOT_REVEAL_TEST_BOT],
+                    knowledge=_persona_knowledge_from_test(t),
                 )
             )
             success = t["success"]
@@ -373,6 +374,15 @@ def generate_suite(
         personas=personas,
         scenarios=scenarios,
     )
+
+
+def _persona_knowledge_from_test(test: dict[str, Any]) -> dict[str, Any]:
+    """Merge LLM-provided knowledge with stable fake contact defaults."""
+    raw = test.get("knowledge")
+    base: dict[str, Any] = {}
+    if isinstance(raw, dict):
+        base = {str(k): v for k, v in raw.items() if v is not None and str(v).strip()}
+    return enrich_persona_knowledge(base)
 
 
 def _token_env_for_platform(plat: str) -> str | None:

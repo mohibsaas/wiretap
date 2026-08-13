@@ -17,7 +17,7 @@ from wiretap.models import AgentTarget
 from wiretap.providers.env import require_env
 from wiretap.providers.tts import TTS_SAMPLE_RATE, synthesize_pcm
 from wiretap.transport.base import Inbound, Transport
-from wiretap.transport.audio_util import downsample_pcm16
+from wiretap.transport.audio_util import downsample_pcm16, pad_pcm16_silence
 from wiretap.transport.transcript_util import accept_final_utterance
 
 ELEVEN_API = "https://api.elevenlabs.io"
@@ -83,8 +83,14 @@ class ElevenLabsTransport(Transport):
         pcm = await synthesize_pcm(
             text, voice=self._voice or "alloy", provider=self._tts_name
         )
+        if len(pcm) < TTS_SAMPLE_RATE // 5:
+            raise RuntimeError(
+                "Caller TTS returned empty/too-short audio — "
+                "check speech.tts provider and voice id"
+            )
         if TTS_SAMPLE_RATE != 24_000:
             pcm = downsample_pcm16(pcm, TTS_SAMPLE_RATE, 24_000)
+        pcm = pad_pcm16_silence(pcm, sample_rate=24_000)
         self._record(pcm, sample_rate=24_000)
         chunk_size = 24_000 * 2 // 10  # ~100ms
         for i in range(0, len(pcm), chunk_size):
