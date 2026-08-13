@@ -6,7 +6,15 @@ from typing import Any
 
 import httpx
 
-from wiretap.importers.agent_graph import AgentGraph, GraphEdge, GraphNode, NodeType
+from wiretap.importers.agent_graph import (
+    AgentGraph,
+    GraphEdge,
+    GraphNode,
+    GraphTool,
+    NodeType,
+    graph_config,
+    graph_tools,
+)
 from wiretap.importers.suite_builder import suite_from_prompt
 from wiretap.models import SuiteConfig
 from wiretap.providers.env import require_env
@@ -53,8 +61,14 @@ async def import_synthflow_agent(model_id: str) -> tuple[SuiteConfig, AgentGraph
             GraphNode(id="end", type=NodeType.END, name="end"),
         ],
         edges=[GraphEdge(id="main->end", source="main", target="end")],
+        tools=_synthflow_tools(data),
         source_platform="synthflow",
         variables={"raw_keys": list(data.keys())[:40]},
+        config=graph_config(
+            language=_synthflow_str(data, "language"),
+            voice_id=_synthflow_str(data, "voice_id") or _synthflow_str(data, "voice"),
+            first_message=first,
+        ),
     )
     suite = suite_from_prompt(
         platform="synthflow",
@@ -66,6 +80,25 @@ async def import_synthflow_agent(model_id: str) -> tuple[SuiteConfig, AgentGraph
     )
     suite.agent.token_env = "SYNTHFLOW_API_KEY"
     return suite, graph
+
+
+def _synthflow_tools(data: dict[str, Any]) -> list[GraphTool]:
+    """Synthflow calls these actions, and renames the key across API versions."""
+    out: list[GraphTool] = []
+    seen: set[str] = set()
+    for key in ("actions", "custom_actions", "tools", "functions"):
+        for tool in graph_tools(data.get(key)):
+            if tool.name in seen:
+                continue
+            seen.add(tool.name)
+            out.append(tool)
+    return out
+
+
+def _synthflow_str(data: dict[str, Any], key: str) -> str:
+    """Synthflow returns some of these as nested objects across API versions."""
+    val = data.get(key)
+    return val.strip() if isinstance(val, str) else ""
 
 
 def _synthflow_prompt(data: dict[str, Any]) -> str:

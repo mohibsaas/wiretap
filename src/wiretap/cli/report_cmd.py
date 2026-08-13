@@ -14,10 +14,7 @@ def register(app: typer.Typer) -> None:
         limit: int = typer.Option(20, "--limit", "-n", help="Max simulations to show."),
     ) -> None:
         """Show recent simulations; suggestions appear on failures only."""
-        from wiretap.cli import style as ui
-
-        with ui.spinner("Loading simulations…"):
-            sims = iter_simulations(limit=limit)
+        sims = iter_simulations(limit=limit)
         if not sims:
             print(
                 "No simulations yet. Use [bold]wiretap simulate --all[/bold] first."

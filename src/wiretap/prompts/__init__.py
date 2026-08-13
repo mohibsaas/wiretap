@@ -4,11 +4,6 @@ Edit prompts here — call sites import builders/constants, they do not
 inline prompt text.
 """
 
-from wiretap.prompts.agent_brief import (
-    agent_brief_from_graph,
-    agent_brief_from_purpose_only,
-    sanitize_text,
-)
 from wiretap.prompts.categories import (
     CATEGORY_CATALOG,
     DEFAULT_CATEGORIES,
@@ -33,8 +28,6 @@ from wiretap.prompts.suite_generation import (
     suite_generation_user_message,
 )
 from wiretap.prompts.test_agent import (
-    HANGUP_TOKEN,
-    PHASE_DONE_TOKEN,
     TEST_AGENT_MAIN_TASK,
     TEST_AGENT_NEXT_REPLY,
     agent_said_message,
@@ -52,21 +45,16 @@ __all__ = [
     "DO_NOT_REVEAL_TEST_BOT",
     "FLOW_COVERAGE_OPENING",
     "FLOW_COVERAGE_RUBRIC",
-    "HANGUP_TOKEN",
     "IMPORTED_PERSONA_PERSONALITY",
     "IMPORTED_SMOKE_RUBRIC",
     "MAX_TESTS_PER_CATEGORY",
-    "PHASE_DONE_TOKEN",
     "SUITE_GENERATION_SYSTEM",
     "TEST_AGENT_MAIN_TASK",
     "TEST_AGENT_NEXT_REPLY",
-    "agent_brief_from_graph",
-    "agent_brief_from_purpose_only",
     "agent_said_message",
     "caller_role_message",
     "judge_call_prompt",
     "phase_task_message",
-    "sanitize_text",
     "suite_generation_context",
     "suite_generation_retry_user_message",
     "suite_generation_user_message",

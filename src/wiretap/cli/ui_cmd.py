@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import webbrowser
+from pathlib import Path
 
 import typer
 from rich import print
 
-from wiretap.paths import ensure_layout, wiretap_root
+from wiretap.paths import ensure_layout
 
 
 def register(app: typer.Typer) -> None:
@@ -28,20 +29,16 @@ def register(app: typer.Typer) -> None:
         """Start the local dashboard (API + SPA) on localhost."""
         import uvicorn
 
-        from wiretap.cli import style as ui
         from wiretap.ui.app import create_app
 
         ensure_layout()
         url = f"http://{host}:{port}"
-        with ui.spinner("Starting dashboard…"):
-            fastapi_app = create_app()
-        print(f"[{ui.ACCENT}]wiretap ui[/{ui.ACCENT}] {url}")
-        print(f"[dim]data[/dim] {wiretap_root()}")
+        print(f"[cyan]wiretap ui[/cyan] {url}")
         if open_browser and host in {"127.0.0.1", "localhost"}:
             webbrowser.open(url)
 
         uvicorn.run(
-            fastapi_app,
+            create_app(cwd=Path.cwd()),
             host=host,
             port=port,
             log_level="info",
