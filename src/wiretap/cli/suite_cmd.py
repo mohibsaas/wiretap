@@ -105,9 +105,14 @@ def register(app: typer.Typer) -> None:
 
         New suite: pass --purpose and/or --agent-from.
         Existing suite: regenerates scenarios; keeps the current agent target.
+
+        When the agent was imported, generation is grounded in a sanitized brief
+        of its prompt, tools and flow read from .wiretap/graphs/. Otherwise it
+        falls back to --purpose plus category guidance.
         """
         from wiretap.importers.suite_builder import slug
         from wiretap.paths import ensure_layout, suite_path
+        from wiretap.services.agent_brief import brief_for_suite
         from wiretap.services.generator import fill_suite_scenarios, parse_categories
         from wiretap.services.onboard import load_onboard_state
         from wiretap.suite import dump_suite, load_suite
@@ -133,10 +138,19 @@ def register(app: typer.Typer) -> None:
             if agent_from_bit:
                 cfg = _apply_agent_from(cfg, agent_from_bit)
             agent_label = str(cfg.agent.agent_id or cfg.agent.platform or name)
+            # The imported agent config lives beside the suite as graph IR.
+            # --agent-from rebinds the target, so prefer that agent's graph.
+            brief = brief_for_suite(
+                agent_from_bit or name,
+                suite=cfg,
+                purpose=purpose_bit,
+                agent_name=agent_label,
+            )
             print(
                 f"[cyan]Refilling[/cyan] {path.name}  "
                 f"[dim]agent[/dim] {agent_label}  "
                 f"[dim]model[/dim] {cfg.models.simulator}"
+                + ("  [dim]grounded in agent config[/dim]" if brief else "")
             )
             fill_suite_scenarios(
                 cfg,
@@ -145,6 +159,7 @@ def register(app: typer.Typer) -> None:
                 purpose=purpose_bit,
                 agent_name=agent_label,
                 model=cfg.models.simulator,
+                brief=brief,
             )
             action = "Updated"
         else:
@@ -198,6 +213,12 @@ def register(app: typer.Typer) -> None:
                     purpose=purpose_bit,
                     agent_name=agent_label,
                     model=cfg.models.simulator,
+                    brief=brief_for_suite(
+                        agent_from_bit or name,
+                        suite=cfg,
+                        purpose=purpose_bit,
+                        agent_name=agent_label,
+                    ),
                 )
             action = "Created"
 
@@ -299,6 +320,7 @@ def _build_new_suite(
     tests_per_category: int,
 ):
     from wiretap.paths import suite_path
+    from wiretap.services.agent_brief import brief_for_suite
     from wiretap.services.generator import generate_suite
     from wiretap.suite import load_suite
 
@@ -309,6 +331,7 @@ def _build_new_suite(
     room_url = None
     token_env = None
     models_sim = "gpt-4o-mini"
+    brief: dict = {}
 
     if agent_from:
         src_path = suite_path(agent_from)
@@ -323,6 +346,14 @@ def _build_new_suite(
         token_env = src.agent.token_env
         agent_name = str(agent_id or platform or name)
         models_sim = src.models.simulator
+        brief = brief_for_suite(
+            agent_from,
+            suite=src,
+            purpose=purpose,
+            agent_name=agent_name,
+        )
+        if brief:
+            print("[dim]Grounding tests in the imported agent config[/dim]")
 
     purpose_for_llm = purpose or (
         f"Tests for {agent_name}" if agent_from else ""
@@ -336,6 +367,7 @@ def _build_new_suite(
         tests_per_category=tests_per_category,
         transport=transport,
         model=models_sim,
+        brief=brief,
     )
     if room_url:
         suite.agent.room_url = room_url

@@ -14,6 +14,21 @@ SUITE_GENERATION_SYSTEM = (
     "success: judge criteria for a pass. excludes: optional list of "
     "banned substrings the agent must not say (else []). "
     "Scenarios must be realistic phone conversations and mutually distinct."
+    "\n\n"
+    "Grounding rules:\n"
+    "- When agent_brief is present, ground every scenario in it — its stated "
+    "role, goals, constraints, tools and flow. Task, compliance and factual "
+    "scenarios must probe what this agent actually does.\n"
+    "- Never invent tools, policies, prices or capabilities that contradict "
+    "the brief. If a detail is not in the brief, have the caller ask for it "
+    "rather than asserting it.\n"
+    "- agent_brief.irreversible_tools are side effects the caller cannot undo; "
+    "they are good targets for confirmation and escalation scenarios.\n"
+    "- Never put any agent_brief.end_call_phrases value, or a farewell, in "
+    "'say'. That hangs up the call and scores as an agent failure.\n"
+    "- Write 'say' in agent_brief.language when one is given.\n"
+    "- When agent_brief is absent or empty, fall back to purpose plus the "
+    "category guidance."
 )
 
 
@@ -26,8 +41,9 @@ def suite_generation_context(
     category_description: str,
     count: int,
     few_shot_examples: list[dict[str, Any]],
+    agent_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    context: dict[str, Any] = {
         "agent_name": agent_name,
         "purpose": purpose.strip() or "(none provided)",
         "category": category,
@@ -36,6 +52,10 @@ def suite_generation_context(
         "count": count,
         "few_shot_examples": few_shot_examples,
     }
+    # Sanitized upstream in services.agent_brief; omitted entirely when empty so
+    # the model sees no half-filled brief to over-read.
+    context["agent_brief"] = agent_brief or {}
+    return context
 
 
 def suite_generation_user_message(count: int, context: dict[str, Any]) -> str:

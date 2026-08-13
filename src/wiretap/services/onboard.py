@@ -25,6 +25,7 @@ from wiretap.providers.catalog import (
     known_provider_ids,
     provider_catalog,
 )
+from wiretap.services.agent_brief import brief_for_suite
 from wiretap.services.generator import generate_suite, list_categories, parse_categories
 from wiretap.services.secrets import key_status, upsert_secrets
 from wiretap.services.suites import get_suite, list_suites
@@ -328,6 +329,7 @@ def generate_onboard_suite(
 
     # If we already imported a suite, reuse its agent target
     agent_kwargs: dict[str, Any] = {}
+    existing: SuiteConfig | None = None
     existing_path = suite_path(name, cwd) if state.get("suite_name") else None
     if existing_path and existing_path.is_file():
         from wiretap.suite import load_suite
@@ -347,6 +349,13 @@ def generate_onboard_suite(
 
     cats = parse_categories(categories)
     model = str(state.get("simulator_model") or "gpt-4o-mini")
+    brief = brief_for_suite(
+        name,
+        suite=existing,
+        purpose=purpose,
+        agent_name=str(agent_name),
+        cwd=cwd,
+    )
     suite = generate_suite(
         platform=str(agent_kwargs["platform"]),
         agent_id=agent_kwargs.get("agent_id"),
@@ -356,6 +365,7 @@ def generate_onboard_suite(
         tests_per_category=tests_per_category,
         transport=str(agent_kwargs.get("transport") or "webrtc"),
         model=model,
+        brief=brief,
     )
     # Apply OUR test agent stack from onboarding
     suite.models.simulator = str(state.get("simulator_model") or suite.models.simulator)
