@@ -95,11 +95,38 @@ class SimulationMode(BaseModel):
 RunMode = SimulationMode
 
 
+class JudgeMetricSpec(BaseModel):
+    """Deprecated — kept so older suite YAML still loads."""
+
+    weight: float = 1.0
+    threshold: float = 0.7
+    required: bool = True
+    description: str = ""
+
+
+def default_judge_metrics() -> dict[str, JudgeMetricSpec]:
+    """No multi-rubric pack — goal match is a single score."""
+    return {}
+
+
+class JudgeConfig(BaseModel):
+    """Suite-level judge gate — goal / success-criteria match score."""
+
+    # Bands: score < fail_below → fail; fail_below ≤ score < pass_threshold → partial;
+    # score ≥ pass_threshold → pass.
+    fail_below: float = 0.5
+    pass_threshold: float = 0.7
+    # Deprecated fields (ignored by the goal-match judge; kept for YAML compat).
+    pass_mode: str = "goal_match"
+    metrics: dict[str, JudgeMetricSpec] = Field(default_factory=dict)
+
+
 class SuiteConfig(BaseModel):
     agent: AgentTarget = Field(default_factory=AgentTarget)
     models: ModelSlots = Field(default_factory=ModelSlots)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
     mode: SimulationMode = Field(default_factory=SimulationMode)
+    judge: JudgeConfig = Field(default_factory=JudgeConfig)
     personas: list[Persona]
     scenarios: list[Scenario]
 
@@ -108,6 +135,21 @@ class TurnRecord(BaseModel):
     role: str  # user | agent
     text: str
     intended_text: str | None = None
+    # Offset into the mixed call WAV (CallRecorder timeline), when known.
+    start_ms: float | None = None
+    end_ms: float | None = None
+
+
+class MetricScore(BaseModel):
+    """Deprecated multi-rubric row — kept for old artifacts."""
+
+    id: str
+    score: float
+    passed: bool
+    threshold: float = 0.7
+    required: bool = True
+    weight: float = 1.0
+    rationale: str = ""
 
 
 class ToolCallRecord(BaseModel):
@@ -129,9 +171,14 @@ class ToolCallRecord(BaseModel):
 
 class JudgeResult(BaseModel):
     passed: bool
-    score: float | None = None
+    score: float | None = None  # 0–1 goal match (UI shows as %)
+    verdict: str = "fail"  # fail | partial | pass
     reason: str
     suggestions: list[str] = Field(default_factory=list)
+    metrics: list[MetricScore] = Field(default_factory=list)  # unused (compat)
+    pass_mode: str = "goal_match"
+    fail_below: float = 0.5
+    pass_at: float = 0.7
 
 
 class RuleResult(BaseModel):
@@ -165,7 +212,10 @@ class SimulationArtifact(BaseModel):
 __all__ = [
     "AgentTarget",
     "Beat",
+    "JudgeConfig",
+    "JudgeMetricSpec",
     "JudgeResult",
+    "MetricScore",
     "ModelSlots",
     "Persona",
     "RuleCheck",
@@ -179,4 +229,5 @@ __all__ = [
     "ToolCallRecord",
     "TransportKind",
     "TurnRecord",
+    "default_judge_metrics",
 ]

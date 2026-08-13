@@ -26,16 +26,17 @@ def register(app: typer.Typer) -> None:
 
     @app.command("init")
     def init_cmd(
-        caller_only: bool = typer.Option(
+        simulator_only: bool = typer.Option(
             False,
+            "--simulator-only",
             "--caller-only",
-            help="Only configure the test agent (LLM + STT/TTS); skip live agent.",
+            help="Only configure the simulator (prefer: wiretap simulator configure).",
         ),
         force: bool = typer.Option(
             False,
             "--force",
             "-f",
-            help="Re-run test-agent setup even if already configured.",
+            help="Re-run simulator setup even if already configured.",
         ),
         categories: str = typer.Option(
             ",".join(DEFAULT_CATEGORIES), "--categories", "-C", help=_CAT_HELP
@@ -74,25 +75,28 @@ def register(app: typer.Typer) -> None:
             "Local setup · keys → ~/.wiretap/.env · never printed",
         )
 
-        # Step 1 — test agent
+        # Step 1 — simulator (LLM + speech for the dialing party)
         ui.step(
             1,
             4,
-            "Test agent",
-            detail="LLM + STT/TTS used by the simulated caller",
+            "Simulator",
+            detail="LLM + STT/TTS used when dialing the live agent",
         )
         status = onboard_status()
         if status.get("caller_configured") and not force:
-            ui.muted("Already configured — use --force to redo.")
+            ui.muted(
+                "Already configured — "
+                "wiretap simulator configure  to change providers, or --force here."
+            )
             ensure_caller_configured(force=False)
-            ui.ok("Test agent ready")
+            ui.ok("Simulator ready")
         else:
             configure_caller_interactive()
 
-        if caller_only:
+        if simulator_only:
             print_status()
-            ui.next_cmd("wiretap import retell --agent-id …")
-            ui.next_cmd("wiretap ui run", hint="Or")
+            ui.next_cmd("wiretap simulator configure", hint="Update simulator later")
+            ui.next_cmd("wiretap import retell")
             return
 
         # Step 2 — live agent
@@ -102,70 +106,120 @@ def register(app: typer.Typer) -> None:
             "Live agent",
             detail="Import a production voice agent to dial during simulate",
         )
-        connect = typer.confirm("Connect a live agent now?", default=True)
-        if not connect:
-            state = load_onboard_state()
-            state["platform"] = state.get("platform") or "custom"
-            save_onboard_state(state)
-            ui.warn("Skipped live agent — you can import later.")
-            ui.next_cmd("wiretap import retell --agent-id …")
-            print_status()
-            return
+        with ui.timeline("Connect production agent") as rail:
+            connect = typer.confirm("Connect a live agent now?", default=True)
+            if not connect:
+                state = load_onboard_state()
+                state["platform"] = state.get("platform") or "custom"
+                save_onboard_state(state)
+                rail.finish("Skipped — import a live agent later")
+                ui.next_cmd("wiretap import retell")
+                print_status()
+                return
 
-        platforms = [
-            "retell",
-            "vapi",
-            "elevenlabs",
-            "livekit",
-            "synthflow",
-            "bolna",
-            "custom",
-        ]
-        ui.info("Choose a platform")
-        ui.platform_table(platforms, default="retell")
-        platform = typer.prompt("Platform", default="retell").strip().lower()
-        if platform not in platforms:
-            ui.warn(f"Unknown platform {platform!r} — using custom")
-            platform = "custom"
+            rail.group("Platform")
+            platforms = [
+                "retell",
+                "vapi",
+                "elevenlabs",
+                "livekit",
+                "synthflow",
+                "bolna",
+                "custom",
+            ]
+            from wiretap.cli.pick import pick_option
 
-        agent_id: str | None = None
-        room_url: str | None = None
-        api_key: str | None = None
-        api_secret: str | None = None
+            platform = pick_option(
+                "Platform",
+                platforms,
+                default="retell",
+                allow_custom=True,
+            ).strip().lower()
+            if platform not in platforms:
+                ui.warn(f"Unknown platform {platform!r} — using custom")
+                platform = "custom"
 
-        if platform != "custom":
-            ensure_platform_key(platform)
-            if platform == "livekit":
-                agent_id = typer.prompt("LiveKit room name").strip()
-                room_url = typer.prompt("LiveKit URL (wss://…)").strip()
-            elif platform == "synthflow":
-                agent_id = typer.prompt("Synthflow model / assistant id").strip()
+            rail.group("Credentials")
+            agent_id: str | None = None
+            room_url: str | None = None
+            api_key: str | None = None
+            api_secret: str | None = None
+
+            if platform != "custom":
+                ensure_platform_key(platform)
+                if platform == "livekit":
+                    agent_id = typer.prompt("LiveKit room name").strip()
+                    room_url = typer.prompt("LiveKit URL (wss://…)").strip()
+                elif platform in {"retell", "vapi", "elevenlabs"}:
+                    from wiretap.cli.pick import pick_option
+                    from wiretap.importers.remote_agents import list_remote_agents
+
+                    with ui.spinner(f"Loading {platform} agents…"):
+                        remote = list_remote_agents(platform)
+                    agents = list(remote.get("agents") or [])
+                    if remote.get("source") == "live" and agents:
+                        ui.rail_text(
+                            f"[{ui.ACCENT}]•[/{ui.ACCENT}] Found {len(agents)} agents"
+                        )
+                        ui.rail_text()
+                        agent_id = pick_option(
+                            "Agent",
+                            [(a["label"], a["id"]) for a in agents],
+                            default=str(agents[0]["id"]),
+                            allow_custom=True,
+                            custom_prompt="Paste custom agent id",
+                        )
+                    else:
+                        reason = remote.get("error") or "unavailable"
+                        from wiretap.cli.prompts import PLATFORM_API_KEYS
+                        from wiretap.providers.errors import (
+                            catalog_error_message,
+                            is_auth_error,
+                        )
+
+                        env_name = PLATFORM_API_KEYS.get(platform, f"{platform.upper()}_API_KEY")
+                        if is_auth_error(str(reason)):
+                            ui.warn(
+                                catalog_error_message(
+                                    str(reason), env_name=env_name, what="agents"
+                                )
+                            )
+                        else:
+                            ui.muted(f"Could not list agents ({reason}) — paste an id")
+                        prompt_label = (
+                            "Synthflow model / assistant id"
+                            if platform == "synthflow"
+                            else "Agent id"
+                        )
+                        agent_id = typer.prompt(prompt_label).strip()
+                elif platform == "synthflow":
+                    agent_id = typer.prompt("Synthflow model / assistant id").strip()
+                else:
+                    agent_id = typer.prompt("Agent id").strip()
             else:
-                agent_id = typer.prompt("Agent id").strip()
-        else:
-            agent_id = (
-                typer.prompt("Name (optional)", default="custom").strip() or "custom"
-            )
-
-        try:
-            with ui.spinner(f"Connecting {platform} agent…"):
-                result = asyncio.run(
-                    connect_agent(
-                        platform=platform,
-                        agent_id=agent_id,
-                        api_key=api_key,
-                        api_secret=api_secret,
-                        room_url=room_url,
-                    )
+                agent_id = (
+                    typer.prompt("Name (optional)", default="custom").strip() or "custom"
                 )
-        except (ValueError, RuntimeError, OSError) as exc:
-            ui.err(f"Connect failed: {exc}")
-            raise typer.Exit(1) from exc
 
-        ui.ok(
-            f"Connected [bold]{result.get('platform')}[/bold] "
-            f"· suite [{ui.ACCENT}]{result.get('suite_name')}[/{ui.ACCENT}]"
-        )
+            try:
+                with ui.spinner(f"Connecting {platform} agent…"):
+                    result = asyncio.run(
+                        connect_agent(
+                            platform=platform,
+                            agent_id=agent_id,
+                            api_key=api_key,
+                            api_secret=api_secret,
+                            room_url=room_url,
+                        )
+                    )
+            except (ValueError, RuntimeError, OSError) as exc:
+                ui.err(f"Connect failed: {exc}")
+                raise typer.Exit(1) from exc
+
+            rail.finish(
+                f"Connected [bold]{result.get('platform')}[/bold] "
+                f"· suite [{ui.ACCENT}]{result.get('suite_name')}[/{ui.ACCENT}]"
+            )
         if result.get("live_deferred"):
             ui.warn("Live dial for this platform is deferred (import only).")
 

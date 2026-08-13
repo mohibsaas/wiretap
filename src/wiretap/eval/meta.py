@@ -14,8 +14,16 @@ def check_caller_contract(
     """Return list of contract violations. Empty = OK."""
     violations: list[str] = []
     user_turns = [t for t in turns if t.role == "user"]
+    agent_turns = [t for t in turns if t.role == "agent"]
     if not user_turns:
-        violations.append("caller produced no utterances")
+        if not agent_turns:
+            # Live STT/turn-gate never delivered agent speech — harness fault,
+            # not a persona/LLM regression.
+            violations.append(
+                "never heard agent speech live (STT/turn gate timed out or failed)"
+            )
+        else:
+            violations.append("caller produced no utterances")
         return violations
 
     known = {str(v).lower() for v in persona.knowledge.values() if v is not None}

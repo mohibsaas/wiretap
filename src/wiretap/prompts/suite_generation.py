@@ -50,7 +50,7 @@ that contradict the brief.
 1. Output MUST be a single JSON array — no markdown fences, no commentary.
 2. Generate exactly the requested count of objects.
 3. Each object MUST use keys: name, identity, goal, say, success, excludes,
-   expected_tools.
+   and optionally knowledge and expected_tools.
 4. name: short human title (≤ 8 words), unique within the batch.
 5. identity: who the caller is (one sentence, third person).
 6. goal: what the caller wants by end of call (observable outcome).
@@ -59,17 +59,20 @@ that contradict the brief.
    words like "good" or "helpful" without a concrete behavior.
 9. excludes: list of banned substrings the live agent must not say (strings).
    Use [] unless the category needs policy red lines (compliance, adversarial).
-9a. expected_tools: names of tools the live agent MUST invoke for this scenario
+10. knowledge (optional object): fake caller facts the simulator may speak —
+    include zip_code (5 digits) and callback_phone when intake is expected.
+    Use clearly fake values only (e.g. 90210, 5551234567) — never real PII.
+11. expected_tools: names of tools the live agent MUST invoke for this scenario
     to count as handled. Copy names EXACTLY from agent_brief.tools — never invent
     one, and never guess at a tool that is not listed there. Use [] when the
     scenario needs no tool, when the caller is expected to abandon the call, or
     when no agent_brief is provided. Prefer [] over a speculative guess: a tool
     listed here is treated as a hard expectation by the judge.
-10. Scenarios in one batch must differ in caller intent, pressure, or edge case —
+12. Scenarios in one batch must differ in caller intent, pressure, or edge case —
     not just reword the same plot.
-11. Prefer positive instructions in success ("Agent does X") over vague negatives.
-12. Never put API keys, tokens, passwords, or real PII in any field.
-13. Do not write scenarios that require the test agent to reveal it is a bot.
+13. Prefer positive instructions in success ("Agent does X") over vague negatives.
+14. Never put API keys, tokens, passwords, or real PII in any field.
+15. Do not write scenarios that require the test agent to reveal it is a bot.
 </rules>
 
 <field_schema>
@@ -81,6 +84,11 @@ that contradict the brief.
     "say": "string",
     "success": "string",
     "excludes": ["string"],
+    "knowledge": {
+      "full_name": "string",
+      "zip_code": "string",
+      "callback_phone": "string"
+    },
     "expected_tools": ["string"]
   }
 ]
@@ -99,7 +107,7 @@ def suite_generation_context(
     few_shot_examples: list[dict[str, Any]],
     agent_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    context: dict[str, Any] = {
+    ctx: dict[str, Any] = {
         "agent_name": agent_name,
         "purpose": purpose.strip() or "(none provided)",
         "category": category,
@@ -108,10 +116,9 @@ def suite_generation_context(
         "count": count,
         "few_shot_examples": few_shot_examples,
     }
-    # Sanitized upstream in services.agent_brief; empty rather than partial so
-    # the model has no half-filled brief to over-read.
-    context["agent_brief"] = agent_brief or {}
-    return context
+    if agent_brief:
+        ctx["agent_brief"] = agent_brief
+    return ctx
 
 
 def suite_generation_user_message(count: int, context: dict[str, Any]) -> str:

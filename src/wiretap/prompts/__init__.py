@@ -2,6 +2,9 @@
 
 Edit prompts here — call sites import builders/constants, they do not
 inline prompt text.
+
+Agent briefs for generation live in ``wiretap.services.agent_brief`` (single
+source — tools, end-call phrases, strong redaction).
 """
 
 from wiretap.prompts.categories import (

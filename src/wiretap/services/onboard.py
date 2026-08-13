@@ -21,14 +21,12 @@ from wiretap.importers.suite_builder import slug
 from wiretap.models import SuiteConfig
 from wiretap.paths import ensure_layout, graphs_dir, suite_path, wiretap_root
 from wiretap.providers.catalog import (
+    default_voice_for,
     env_for_provider,
     known_provider_ids,
     provider_catalog,
 )
-from wiretap.services.agent_brief import brief_for_suite
-from wiretap.services.generator import generate_suite, list_categories, parse_categories
 from wiretap.services.secrets import key_status, upsert_secrets
-from wiretap.services.suites import get_suite, list_suites
 from wiretap.suite import dump_suite
 
 
@@ -80,6 +78,9 @@ def onboard_status(
     *,
     include_providers: bool = True,
 ) -> dict[str, Any]:
+    from wiretap.services.generator import list_categories
+    from wiretap.services.suites import list_suites
+
     keys = key_status(cwd)
     suites = list_suites(cwd)
     state = load_onboard_state(cwd)
@@ -117,7 +118,7 @@ def onboard_status(
             "judge_model": state.get("judge_model") or default_model,
             "stt": stt,
             "tts": tts,
-            "voice": state.get("voice") or "alloy",
+            "voice": state.get("voice") or default_voice_for(tts),
         }
     else:
         caller = {
@@ -159,7 +160,7 @@ def configure_caller(
     judge_model: str = "gpt-4o-mini",
     stt: str = "pyai",
     tts: str = "pyai",
-    voice: str = "alloy",
+    voice: str = "",
     speech_api_key: str | None = None,
     stt_api_key: str | None = None,
     tts_api_key: str | None = None,
@@ -206,6 +207,7 @@ def configure_caller(
         raise ValueError(f"{env_for_provider(tts_name)} required for TTS provider {tts_name!r}")
 
     default_model = _default_model_for(provider, provider_catalog())
+    resolved_voice = (voice or "").strip() or default_voice_for(tts_name)
     state = load_onboard_state(cwd)
     state.update(
         {
@@ -214,12 +216,95 @@ def configure_caller(
             "judge_model": (judge_model or "").strip() or default_model,
             "stt": stt_name,
             "tts": tts_name,
-            "voice": (voice or "alloy").strip() or "alloy",
+            "voice": resolved_voice,
             "caller_configured": True,
         }
     )
     save_onboard_state(state, cwd)
-    return {"caller": onboard_status(cwd)["caller"], "keys": key_status(cwd)}
+    synced = sync_simulator_config_to_suites(cwd)
+    result = {"caller": onboard_status(cwd)["caller"], "keys": key_status(cwd)}
+    if synced:
+        result["suites_synced"] = synced
+    return result
+
+
+def apply_simulator_config(
+    suite: SuiteConfig,
+    cwd: Path | None = None,
+) -> SuiteConfig:
+    """Overlay local simulator stack (models + speech) from onboard onto a suite.
+
+    ``wiretap simulator configure`` writes ``onboard.json``; suite YAML only
+    gets a snapshot at generate/import time. Simulation must prefer the live
+    onboard config or STT/TTS changes never take effect.
+    """
+    state = load_onboard_state(cwd)
+    if not state.get("caller_configured"):
+        return suite
+
+    sim = str(state.get("simulator_model") or "").strip()
+    judge = str(state.get("judge_model") or "").strip()
+    stt = str(state.get("stt") or "").strip()
+    tts = str(state.get("tts") or "").strip()
+    voice = state.get("voice")
+
+    if sim:
+        suite.models.simulator = sim
+    if judge:
+        suite.models.judge = judge
+    if stt:
+        suite.speech.stt = stt
+    if tts:
+        suite.speech.tts = tts
+    if voice is not None and str(voice).strip():
+        suite.speech.voice = str(voice).strip()
+    elif tts:
+        suite.speech.voice = default_voice_for(tts)
+    return suite
+
+
+def sync_simulator_config_to_suites(cwd: Path | None = None) -> list[str]:
+    """Rewrite models/speech on local suite YAMLs to match onboard config."""
+    from wiretap.paths import suites_dir
+    from wiretap.suite.loader import load_suite
+
+    state = load_onboard_state(cwd)
+    if not state.get("caller_configured"):
+        return []
+
+    root = suites_dir(cwd)
+    if not root.is_dir():
+        return []
+
+    updated: list[str] = []
+    for path in sorted(root.glob("*.yaml")) + sorted(root.glob("*.yml")):
+        try:
+            suite = load_suite(path)
+        except (OSError, TypeError, ValidationError, ValueError):
+            continue
+        before = (
+            suite.models.simulator,
+            suite.models.judge,
+            suite.speech.stt,
+            suite.speech.tts,
+            suite.speech.voice,
+        )
+        apply_simulator_config(suite, cwd)
+        after = (
+            suite.models.simulator,
+            suite.models.judge,
+            suite.speech.stt,
+            suite.speech.tts,
+            suite.speech.voice,
+        )
+        if before == after:
+            continue
+        try:
+            dump_suite(suite, path)
+        except OSError:
+            continue
+        updated.append(path.stem)
+    return updated
 
 
 
@@ -356,6 +441,9 @@ def generate_onboard_suite(
     cwd: Path | None = None,
     on_progress=None,
 ) -> dict[str, Any]:
+    from wiretap.services.agent_brief import brief_for_suite
+    from wiretap.services.generator import generate_suite, parse_categories
+
     state = load_onboard_state(cwd)
     plat = (state.get("platform") or "custom").lower()
     agent_id = state.get("agent_id")
@@ -441,6 +529,8 @@ def generate_onboard_suite(
 
 def list_agents(cwd: Path | None = None) -> list[dict[str, Any]]:
     """Agents as seen through local suites (no remote directory yet)."""
+    from wiretap.services.suites import get_suite, list_suites
+
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for s in list_suites(cwd):
@@ -486,6 +576,7 @@ def list_agents(cwd: Path | None = None) -> list[dict[str, Any]]:
 
 
 __all__ = [
+    "apply_simulator_config",
     "configure_caller",
     "connect_agent",
     "generate_onboard_suite",
@@ -493,4 +584,5 @@ __all__ = [
     "load_onboard_state",
     "onboard_status",
     "save_onboard_state",
+    "sync_simulator_config_to_suites",
 ]

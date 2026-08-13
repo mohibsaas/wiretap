@@ -1,10 +1,13 @@
-"""LLM prompt for the call eval judge (LLM-as-judge).
+"""LLM prompt for goal-match call evaluation (LLM-as-judge).
 
-Uses an analytic checklist + explicit pass gate so scores stay grounded in the
-transcript rather than vibe.
+Scores how well the live agent met the scenario success criteria / caller goal.
+Wiretap maps the 0–1 score onto fail / partial / pass bands.
+Optional tool evidence is included when the live platform recorded tool calls.
 """
 
 from __future__ import annotations
+
+import json
 
 
 def _tool_evidence_block(tool_report: str) -> str:
@@ -42,57 +45,72 @@ tools.
 def judge_call_prompt(
     *,
     success_criteria: str,
-    rubric: str,
+    goal: str = "",
+    scenario_name: str = "",
+    rubric: str = "",
     transcript: str,
+    fail_below: float = 0.5,
+    pass_at: float = 0.7,
     tool_report: str = "",
 ) -> str:
-    rubric_bit = (rubric or "").strip() or (
-        "Pass only if success criteria are met from the transcript. "
-        "Fail on invented facts, ignored clear intent, or policy breaks."
-    )
+    """Build the judge user prompt — single goal-match score, optional tools."""
+    criteria = (success_criteria or "").strip() or "(none provided)"
+    goal_bit = (goal or "").strip() or "(none — use success criteria)"
+    name_bit = (scenario_name or "").strip() or "scenario"
+    extra = (rubric or "").strip()
+    extra_block = f"\n<extra_notes>\n{extra}\n</extra_notes>\n" if extra else ""
     tool_block = _tool_evidence_block(tool_report)
+
     return f"""\
 <role>
 You are Wiretap's call evaluator. You score ONE completed voice-agent test call
-using only the transcript, the recorded tool calls, and the supplied criteria.
-You are not the caller and not the live agent.
+using the transcript, the supplied criteria, and (when present) recorded tool
+calls. You are not the caller and not the live agent under test.
 </role>
 
 <task>
-Decide pass/fail against success criteria. When the call fails, give concrete
-improvements for the live agent (not the test harness).
+Judge how well the LIVE AGENT satisfied the caller's goal and this scenario's
+success criteria. Return a single match score from 0.0–1.0 (Wiretap shows it as
+a percentage and maps it to fail / partial / pass).
 </task>
 
-<success_criteria>
-{success_criteria.strip() or "(none — use rubric only)"}
-</success_criteria>
+<scenario>
+{name_bit}
+</scenario>
 
-<rubric>
-{rubric_bit}
-</rubric>
-{tool_block}
+<caller_goal>
+{goal_bit}
+</caller_goal>
+
+<success_criteria>
+{criteria}
+</success_criteria>
+{extra_block}{tool_block}
 <scoring_guide>
-Score is optional (number from 0.0 to 1.0) reflecting how fully criteria were met:
-- 1.0: criteria clearly met; no material policy/factual failures
-- 0.7–0.9: mostly met; minor gaps that do not break the call goal
-- 0.4–0.6: partial; caller intent recognized but outcome incomplete or shaky
-- 0.0–0.3: failed goal, harmful behavior, hallucination, or clear policy break
-Set passed=true only when success criteria are substantially met (typically ≥ 0.7
-unless the rubric defines a stricter bar). Prefer fail when uncertain.
-A missing expected tool or a hallucinated completed action caps the score at 0.3
-regardless of how competent the conversation sounded.
+score = how completely the live agent achieved the success criteria / goal:
+- 0.85–1.00: fully met; clear resolution aligned with the criteria
+- 0.70–0.84: substantially met; minor gaps only
+- 0.50–0.69: partial progress; important pieces missing
+- 0.00–0.49: mostly failed, harmful, or criteria not addressed
+When <tool_evidence> is present: a missing expected tool (after the call reached
+the point requiring it) or a hallucinated completed action should keep the score
+at or below 0.49.
+Bands Wiretap will apply (do not invent other bands):
+- score &lt; {fail_below:.2f} → fail
+- {fail_below:.2f} ≤ score &lt; {pass_at:.2f} → partial
+- score ≥ {pass_at:.2f} → pass
 </scoring_guide>
 
 <rules>
-1. Ground every claim in the transcript or the tool evidence. Quote or paraphrase
-   specific turns.
-2. Do not invent tool results or account data. Treat tool behavior as evidence
-   only when a <tool_evidence> section appears above.
-3. Treat STT noise charitably: minor mishearings are not automatic fails unless
-   the agent invents facts instead of clarifying.
-4. Short voice turns are normal; do not fail solely for brevity.
-5. If passed is true, suggestions MUST be [].
-6. If passed is false, give 1–5 concrete, actionable suggestions for the live agent.
+1. Ground the reason in the transcript and, when present, tool evidence. Cite or
+   paraphrase specific turns.
+2. Do not invent tool results, account data, or off-transcript events. Treat tool
+   behavior as evidence only when a <tool_evidence> section appears above.
+3. Treat STT noise charitably unless the agent invents facts instead of clarifying.
+4. Score ONLY against caller_goal + success_criteria (and extra_notes / tools if
+   present). Do not invent separate policy/empathy/flow rubrics.
+5. If score ≥ {pass_at:.2f}, suggestions MUST be [].
+6. Otherwise give 1–5 concrete, actionable suggestions for the live agent.
 7. Never echo secrets, API keys, tokens, full credential strings, or tool
    argument values.
 8. Respond with JSON only — no markdown fences, no preamble.
@@ -103,12 +121,11 @@ regardless of how competent the conversation sounded.
 </transcript>
 
 <output_format>
-{{
-  "passed": false,
-  "score": 0.0,
-  "reason": "2–4 sentences citing transcript and, where present, tool evidence",
-  "suggestions": ["concrete live-agent improvement", "..."]
-}}
+{json.dumps({
+    "score": 0.0,
+    "reason": "2–4 sentences: how the call matched (or missed) the goal / success criteria",
+    "suggestions": ["concrete live-agent improvement", "..."],
+}, indent=2)}
 </output_format>
 """
 

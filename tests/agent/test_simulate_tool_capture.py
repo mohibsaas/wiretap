@@ -51,20 +51,24 @@ def _suite() -> SuiteConfig:
 
 @pytest.fixture(autouse=True)
 def _stub_llm(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Caller turns and the judge verdict both route through complete()."""
+    """Caller turns and the judge verdict both route through acomplete()."""
 
-    def caller(**kwargs: Any) -> str:
+    async def caller(**kwargs: Any) -> str:
         _ = kwargs
         return "I'd like to cancel my plan, please."
 
-    def judge(**kwargs: Any) -> str:
+    async def judge(**kwargs: Any) -> str:
         _ = kwargs
         return json.dumps(
-            {"passed": True, "score": 0.9, "reason": "Handled.", "suggestions": []}
+            {
+                "score": 0.9,
+                "reason": "Handled.",
+                "suggestions": [],
+            }
         )
 
-    monkeypatch.setattr("wiretap.agent.orchestrator.complete", caller)
-    monkeypatch.setattr("wiretap.eval.judge.complete", judge)
+    monkeypatch.setattr("wiretap.agent.orchestrator.acomplete", caller)
+    monkeypatch.setattr("wiretap.eval.judge.acomplete", judge)
 
 
 def test_unsupported_transport_reports_unobservable_capture(
@@ -92,13 +96,13 @@ def test_unobservable_capture_keeps_tools_out_of_the_judge_prompt(
     monkeypatch.chdir(tmp_path)
     seen: list[str] = []
 
-    def judge(**kwargs: Any) -> str:
+    async def judge(**kwargs: Any) -> str:
         seen.extend(m["content"] for m in kwargs["messages"])
         return json.dumps(
-            {"passed": True, "score": 0.9, "reason": "Handled.", "suggestions": []}
+            {"score": 0.9, "reason": "Handled.", "suggestions": []}
         )
 
-    monkeypatch.setattr("wiretap.eval.judge.complete", judge)
+    monkeypatch.setattr("wiretap.eval.judge.acomplete", judge)
     suite = _suite()
 
     asyncio.run(simulate_scenario(suite, suite.scenarios[0], suite_id="t", cwd=tmp_path))
