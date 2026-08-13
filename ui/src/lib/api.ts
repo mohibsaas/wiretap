@@ -16,46 +16,15 @@ export type SuiteDetail = {
     agent_id?: string | null;
     token_env?: string | null;
   };
-  personas: {
-    id: string;
-    name?: string;
-    identity: string;
-    goal: string;
-    constraints?: string[];
-    personality?: string;
-  }[];
+  personas: { id: string; name?: string; identity: string; goal: string }[];
   scenarios: {
     id: string;
     name: string;
     persona_id: string;
     max_turns: number;
     success_criteria: string;
-    rubric?: string;
     category?: string | null;
   }[];
-};
-
-export type SuiteCaseUpdate = {
-  scenario_id: string;
-  persona_id: string;
-  name: string;
-  category?: string | null;
-  identity: string;
-  goal: string;
-  constraints: string[];
-  max_turns: number;
-  success_criteria?: string | null;
-  rubric?: string | null;
-};
-
-export type JudgeMetric = {
-  id: string;
-  score: number;
-  passed: boolean;
-  threshold: number;
-  required?: boolean;
-  weight?: number;
-  rationale?: string;
 };
 
 export type Simulation = {
@@ -68,26 +37,22 @@ export type Simulation = {
   persona_id: string;
   persona_name?: string;
   passed: boolean;
-  transcript: {
-    role: string;
-    text: string;
-    start_ms?: number | null;
-    end_ms?: number | null;
-  }[];
-  judge: {
-    passed: boolean;
-    reason: string;
-    suggestions: string[];
-    metrics?: JudgeMetric[];
-    score?: number | null;
-    verdict?: string | null;
-    fail_below?: number | null;
-    pass_at?: number | null;
-    pass_mode?: string | null;
-  };
+  transcript: { role: string; text: string }[];
+  tool_calls: ToolCall[];
+  judge: { passed: boolean; reason: string; suggestions: string[] };
   rules: { passed: boolean; failures: string[] };
+  metrics: Record<string, unknown>;
   meta: Record<string, unknown>;
   audio_path?: string | null;
+};
+
+export type ToolCall = {
+  name: string;
+  arguments: Record<string, unknown>;
+  result_summary: string;
+  status: string;
+  turn_index: number | null;
+  at_seconds: number | null;
 };
 
 export type EvaluationRun = {
@@ -123,20 +88,12 @@ export type Category = {
   max_tests: number;
 };
 
-export type VoiceOption = {
-  id: string;
-  label: string;
-};
-
 export type ProviderInfo = {
   id: string;
   label: string;
   kind: string;
   env: string;
   default_model?: string | null;
-  models?: string[];
-  default_voice?: string | null;
-  voices?: VoiceOption[];
 };
 
 export type ProviderCatalog = {
@@ -206,41 +163,6 @@ export const client = {
   health: () => api<{ version: string }>("/api/health"),
   onboardStatus: () => api<OnboardStatus>("/api/onboard/status"),
   providers: () => api<ProviderCatalog>("/api/providers"),
-  llmModels: (provider: string, apiKey?: string | null) =>
-    api<{
-      provider: string;
-      models: string[];
-      default_model: string;
-      source: "live" | "curated";
-      live_supported: boolean;
-      error?: string | null;
-    }>(`/api/providers/llm/${encodeURIComponent(provider)}/models`, {
-      method: "POST",
-      body: JSON.stringify({ api_key: apiKey?.trim() || null }),
-    }),
-  ttsVoices: (provider: string, apiKey?: string | null) =>
-    api<{
-      provider: string;
-      voices: VoiceOption[];
-      default_voice: string;
-      source: "live" | "curated";
-      live_supported: boolean;
-      error?: string | null;
-    }>(`/api/providers/tts/${encodeURIComponent(provider)}/voices`, {
-      method: "POST",
-      body: JSON.stringify({ api_key: apiKey?.trim() || null }),
-    }),
-  platformAgents: (platform: string, apiKey?: string | null) =>
-    api<{
-      platform: string;
-      agents: { id: string; name: string; label: string }[];
-      source: "live" | "unavailable";
-      live_supported: boolean;
-      error?: string | null;
-    }>(`/api/platforms/${encodeURIComponent(platform)}/agents`, {
-      method: "POST",
-      body: JSON.stringify({ api_key: apiKey?.trim() || null }),
-    }),
   configureCaller: (body: {
     llm_provider?: string;
     llm_api_key?: string | null;
@@ -292,12 +214,7 @@ export const client = {
     }),
   agents: () => api<AgentRow[]>("/api/agents"),
   suites: () => api<SuiteSummary[]>("/api/suites"),
-  suite: (name: string) => api<SuiteDetail>(`/api/suites/${encodeURIComponent(name)}`),
-  updateSuite: (name: string, cases: SuiteCaseUpdate[]) =>
-    api<SuiteDetail>(`/api/suites/${encodeURIComponent(name)}`, {
-      method: "PUT",
-      body: JSON.stringify({ cases }),
-    }),
+  suite: (name: string) => api<SuiteDetail>(`/api/suites/${name}`),
   evaluations: (limit = 40) =>
     api<EvaluationRun[]>(`/api/evaluations?limit=${limit}`),
   evaluation: (batchId: string) =>

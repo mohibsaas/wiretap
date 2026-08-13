@@ -1,7 +1,7 @@
 """Vapi WebSocket transport — primary live voice path.
 
 Creates a call with transport.provider=vapi.websocket and streams TTS PCM.
-Turn detection uses shared ``AgentTurnGate`` (same as Retell/LiveKit/Synthflow).
+Agent audio is received as binary; STT via speech factory.
 """
 
 from __future__ import annotations
@@ -14,15 +14,10 @@ import httpx
 
 from wiretap.models import AgentTarget
 from wiretap.providers.env import require_env
-from wiretap.providers.factory import build_tts
-from wiretap.transport.audio_util import pad_pcm16_silence
-from wiretap.transport.base import Inbound, Transport
+from wiretap.providers.factory import build_stt, build_tts
+from wiretap.providers.speech import AudioBuffer
+from wiretap.transport.base import CallRef, Inbound, Transport
 from wiretap.transport.transcript_util import accept_final_utterance, is_vapi_final_transcript
-from wiretap.transport.turn_gate import (
-    AgentTurnGate,
-    receive_coalesced,
-    speak_with_gate_mute,
-)
 
 VAPI_API = "https://api.vapi.ai"
 
@@ -36,15 +31,19 @@ class VapiWebSocketTransport(Transport):
     _tts_name: str = "pyai"
     _voice: str | None = None
     _recv_task: asyncio.Task | None = None
-    _gate: AgentTurnGate | None = None
+    _audio_buf: bytearray = field(default_factory=bytearray)
     _seen_agent: set[str] = field(default_factory=set)
+    _last_audio_at: float = 0.0
+    _flush_task: asyncio.Task | None = None
+    _call_id: str | None = None
 
     def configure_speech(self, *, stt: str, tts: str, voice: str | None) -> None:
         self._stt_name = stt
         self._tts_name = tts
         self._voice = voice
-        if self._gate is not None:
-            self._gate.configure(stt=self._stt_name)
+
+    def call_ref(self) -> CallRef | None:
+        return CallRef(platform="vapi", call_id=self._call_id) if self._call_id else None
 
     async def connect(self, target: AgentTarget) -> None:
         try:
@@ -82,68 +81,66 @@ class VapiWebSocketTransport(Transport):
         ws_url = (data.get("transport") or {}).get("websocketCallUrl")
         if not ws_url:
             raise RuntimeError("Vapi call response missing transport.websocketCallUrl")
-
-        self._gate = AgentTurnGate(
-            stt_name=self._stt_name,
-            on_utterance=self._on_agent_utterance,
-        )
-        self._sync_gate_elapsed()
-        await self._gate.start()
+        self._call_id = str(data.get("id") or "") or None
 
         self._ws = await websockets.connect(ws_url)
         self._connected = True
         self._recv_task = asyncio.create_task(self._reader())
+        self._flush_task = asyncio.create_task(self._silence_flush_loop())
         await self._pending.put(Inbound(text=""))  # ready; may speak first via audio
 
     async def send_text(self, text: str) -> None:
         if not self._connected or self._ws is None:
             raise RuntimeError("not connected")
-
-        pcm_task = asyncio.create_task(
-            build_tts(self._tts_name, self._voice).synthesize(text)
-        )
-
-        async def _publish() -> None:
-            assert self._ws is not None
-            audio = await pcm_task
-            if not audio.pcm or len(audio.pcm) < 24000 // 5:
-                raise RuntimeError(
-                    "Caller TTS returned empty/too-short audio — "
-                    "check speech.tts provider and voice id"
-                )
-            pcm = _downsample_24k_to_16k(audio.pcm)
-            pcm = pad_pcm16_silence(pcm, sample_rate=16_000)
-            self._record(pcm, sample_rate=16_000)
-            await self._ws.send(pcm)
-
-        await speak_with_gate_mute(self._gate, _publish)
+        tts = build_tts(self._tts_name, self._voice)
+        audio = await tts.synthesize(text)
+        # naive resample skip — send as-is; Vapi expects 16k; OpenAI PCM is 24k
+        # Downsample 24k→16k roughly by dropping samples
+        pcm = _downsample_24k_to_16k(audio.pcm)
+        self._record(pcm, sample_rate=16_000)
+        await self._ws.send(pcm)
 
     async def receive(self) -> Inbound:
-        return await receive_coalesced(
-            self._pending, self._gate, connected=self._connected
-        )
+        try:
+            return await asyncio.wait_for(self._pending.get(), timeout=45.0)
+        except TimeoutError:
+            return Inbound(hung_up=True)
 
     async def hangup(self) -> None:
         self._connected = False
+        if self._flush_task:
+            self._flush_task.cancel()
         if self._recv_task:
             self._recv_task.cancel()
-        gate = self._gate
-        self._gate = None
-        if gate is not None:
-            await gate.stop()
+        if self._audio_buf:
+            await self._flush_audio_stt()
         if self._ws is not None:
             await self._ws.close()
             self._ws = None
 
-    async def _on_agent_utterance(
-        self,
-        text: str,
-        start_ms: float | None = None,
-        end_ms: float | None = None,
-    ) -> None:
-        await self._pending.put(
-            Inbound(text=text, start_ms=start_ms, end_ms=end_ms)
-        )
+    async def _silence_flush_loop(self) -> None:
+        """STT only after a short pause so chunked audio is one utterance."""
+        try:
+            while self._connected:
+                await asyncio.sleep(0.25)
+                if not self._audio_buf or not self._last_audio_at:
+                    continue
+                idle = asyncio.get_running_loop().time() - self._last_audio_at
+                if idle >= 0.6 and len(self._audio_buf) >= 3200:
+                    await self._flush_audio_stt()
+        except asyncio.CancelledError:
+            raise
+
+    async def _flush_audio_stt(self) -> None:
+        if not self._audio_buf:
+            return
+        pcm = bytes(self._audio_buf)
+        self._audio_buf.clear()
+        stt = build_stt(self._stt_name)
+        text = await stt.transcribe(AudioBuffer(pcm=pcm, sample_rate=16_000))
+        accepted = accept_final_utterance(text, self._seen_agent)
+        if accepted:
+            await self._pending.put(Inbound(text=accepted))
 
     async def _reader(self) -> None:
         assert self._ws is not None
@@ -151,8 +148,11 @@ class VapiWebSocketTransport(Transport):
             async for message in self._ws:
                 if isinstance(message, bytes):
                     self._record(message, sample_rate=16_000)
-                    if self._gate is not None:
-                        self._gate.push(message, sample_rate=16_000)
+                    self._audio_buf.extend(message)
+                    self._last_audio_at = asyncio.get_running_loop().time()
+                    # Hard cap so we never hold unbounded audio.
+                    if len(self._audio_buf) > 160_000:
+                        await self._flush_audio_stt()
                 elif isinstance(message, str):
                     try:
                         data = json.loads(message)
@@ -160,7 +160,7 @@ class VapiWebSocketTransport(Transport):
                         continue
                     if data.get("type") != "transcript" or data.get("role") != "assistant":
                         continue
-                    # Optional finals — audio gate remains the primary turn path.
+                    # Partials stream like Retell prefixes — only finals are turns.
                     if not is_vapi_final_transcript(data):
                         continue
                     t = data.get("transcript") or data.get("text")
@@ -180,6 +180,7 @@ def _downsample_24k_to_16k(pcm24: bytes) -> bytes:
     samples = array.array("h")
     samples.frombytes(pcm24[: len(pcm24) - (len(pcm24) % 2)])
     out = array.array("h")
+    # 24000/16000 = 1.5 → take 2 of every 3
     i = 0
     while i < len(samples):
         out.append(samples[i])

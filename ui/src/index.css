@@ -1,173 +1,30 @@
 @import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
-
-/* Wiretap design tokens → shadcn semantic aliases */
-:root {
-  /* Surfaces */
-  --wt-white: #ffffff;
-  --wt-canvas: #ffffff;
-  --wt-sidebar: #efeeeb;
-  --wt-section: #f8f8f6;
-  --wt-hover: #f2f1ee;
-  --wt-border: #eaeae7;
-  --wt-border-strong: #d9d8d3;
-  --wt-scrim: rgba(41, 41, 39, 0.32);
-
-  /* Text */
-  --wt-text: #292927;
-  --wt-text-secondary: #747370;
-  --wt-text-muted: #a7a7a5;
-  --wt-text-on-primary: #ffffff;
-
-  /* Brand green */
-  --wt-green-900: #00381e;
-  --wt-green-800: #00522c;
-  --wt-green-700: #006532;
-  --wt-green-600: #056938;
-  --wt-green-500: #1f7b4a;
-  --wt-green-100: #e6eee7;
-  --wt-green-50: #f1f6f1;
-
-  /* Semantic */
-  --wt-danger: #c0392b;
-  --wt-danger-surface: #fbecea;
-  --wt-warning: #b77f17;
-  --wt-warning-surface: #fbf3e1;
-  --wt-info: #2c5cb0;
-  --wt-info-surface: #eaf0fb;
-
-  /* shadcn mapping */
-  --background: var(--wt-sidebar);
-  --foreground: var(--wt-text);
-  --card: var(--wt-canvas);
-  --card-foreground: var(--wt-text);
-  --popover: var(--wt-canvas);
-  --popover-foreground: var(--wt-text);
-  --primary: var(--wt-green-600);
-  --primary-foreground: var(--wt-text-on-primary);
-  --secondary: var(--wt-section);
-  --secondary-foreground: var(--wt-text);
-  --muted: var(--wt-hover);
-  --muted-foreground: var(--wt-text-secondary);
-  --accent: var(--wt-green-100);
-  --accent-foreground: var(--wt-green-800);
-  --destructive: var(--wt-danger);
-  --border: var(--wt-border);
-  --input: var(--wt-border-strong);
-  --ring: color-mix(in srgb, var(--wt-green-600) 35%, transparent);
-  --radius: 0.875rem;
-
-  --sidebar: var(--wt-sidebar);
-  --sidebar-foreground: var(--wt-text);
-  --sidebar-primary: var(--wt-green-600);
-  --sidebar-primary-foreground: var(--wt-text-on-primary);
-  --sidebar-accent: #e4e3df;
-  --sidebar-accent-foreground: var(--wt-text);
-  --sidebar-border: var(--wt-border);
-  --sidebar-ring: var(--ring);
-
-  --chart-1: var(--wt-green-600);
-  --chart-2: var(--wt-info);
-  --chart-3: var(--wt-warning);
-  --chart-4: var(--wt-danger);
-  --chart-5: var(--wt-text-secondary);
-
-  --pass: var(--wt-green-600);
-  --fail: var(--wt-danger);
-  --warn: var(--wt-warning);
-}
-
-@theme inline {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --font-heading: var(--font-sans);
-
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
-  --color-pass: var(--pass);
-  --color-fail: var(--fail);
-  --color-warn: var(--warn);
-
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-pill: 999px;
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --color-background: #f7f7f5;
+  --color-foreground: #1a1a18;
+  --color-card: #ffffff;
+  --color-muted: #efefec;
+  --color-muted-foreground: #6b6b64;
+  --color-border: #e2e2dc;
+  --color-primary: #1a1a18;
+  --color-primary-foreground: #f7f7f5;
+  --color-accent: #2563eb;
+  --color-pass: #15803d;
+  --color-fail: #b91c1c;
+  --color-warn: #a16207;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
   }
   body {
-    @apply bg-background font-sans text-foreground antialiased;
+    @apply bg-background text-foreground font-sans antialiased;
     margin: 0;
-  }
-  html {
-    @apply font-sans;
-  }
-
-  /* Clickable actions use pointer — shadcn defaults to cursor-default on many controls. */
-  a,
-  button:not(:disabled),
-  [role="button"]:not([aria-disabled="true"]),
-  [role="menuitem"]:not([data-disabled]),
-  [role="menuitemradio"]:not([data-disabled]),
-  [role="menuitemcheckbox"]:not([data-disabled]),
-  [role="option"]:not([data-disabled]),
-  [role="tab"]:not([data-disabled]),
-  [role="switch"]:not([data-disabled]),
-  [role="checkbox"]:not([data-disabled]),
-  [role="radio"]:not([data-disabled]),
-  [role="combobox"]:not([data-disabled]),
-  summary,
-  label[for],
-  select:not(:disabled),
-  input[type="checkbox"]:not(:disabled),
-  input[type="radio"]:not(:disabled),
-  input[type="file"]:not(:disabled),
-  input[type="submit"]:not(:disabled),
-  input[type="button"]:not(:disabled),
-  input[type="reset"]:not(:disabled) {
-    cursor: pointer;
-  }
-
-  button:disabled,
-  [aria-disabled="true"],
-  [data-disabled] {
-    cursor: not-allowed;
   }
 }

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 
 import typer
 from rich import print
@@ -22,7 +21,6 @@ _SMOKE_HELP = (
     "(prompt, tools, flow) to your simulator model."
 )
 _API_KEY_HELP = "Platform API key (saved to .env). Prompted if missing."
-_AGENT_ID_HELP = "Remote agent id (omit to pick interactively from the live list)."
 
 
 def _prepare_import(platform: str, *, api_key: str | None, smoke_only: bool) -> None:
@@ -32,88 +30,6 @@ def _prepare_import(platform: str, *, api_key: str | None, smoke_only: bool) -> 
     ensure_platform_key(platform, api_key=api_key)
     if not smoke_only:
         ensure_caller_configured()
-
-
-def _safe_suite_stem(raw: str) -> str:
-    safe = re.sub(r"[^a-zA-Z0-9]+", "_", (raw or "").strip()).strip("_").lower()
-    return safe[:48]
-
-
-def _suite_name_for(
-    name: str,
-    *,
-    platform: str,
-    agent_id: str,
-    agent_name: str | None,
-) -> str:
-    """Keep explicit --name; otherwise derive from the selected agent."""
-    if name.strip() and name.strip() != platform:
-        return name.strip()
-    label = (agent_name or "").strip() or agent_id
-    stem = _safe_suite_stem(label) or _safe_suite_stem(agent_id) or platform
-    if stem.startswith(f"{platform}_"):
-        return stem
-    return f"{platform}_{stem}"
-
-
-def _resolve_remote_agent_id(
-    platform: str,
-    *,
-    agent_id: str | None,
-    api_key: str | None = None,
-    id_label: str = "Agent",
-) -> tuple[str, str | None]:
-    """Return ``(agent_id, display_name)``. Interactive pick when id omitted."""
-    from wiretap.cli import style as ui
-    from wiretap.cli.pick import pick_option
-    from wiretap.cli.prompts import is_interactive
-    from wiretap.importers.remote_agents import list_remote_agents
-
-    explicit = (agent_id or "").strip()
-    if explicit:
-        return explicit, None
-
-    if not is_interactive():
-        ui.err(
-            f"Missing {id_label.lower()} id. Pass --agent-id / --assistant-id "
-            "or run in an interactive terminal to pick from the live list."
-        )
-        raise typer.Exit(1)
-
-    with ui.spinner(f"Loading {platform} agents…"):
-        remote = list_remote_agents(platform, api_key=api_key)
-    agents = list(remote.get("agents") or [])
-    if remote.get("source") == "live" and agents:
-        ui.rail_text(f"[{ui.ACCENT}]•[/{ui.ACCENT}] Found {len(agents)} agents")
-        ui.rail_text()
-        picked = pick_option(
-            id_label,
-            [(a["label"], a["id"]) for a in agents],
-            default=str(agents[0]["id"]),
-            allow_custom=True,
-            custom_prompt=f"Paste custom {id_label.lower()} id",
-        )
-        name = next((a.get("name") for a in agents if a["id"] == picked), None)
-        return picked, str(name) if name else None
-
-    reason = remote.get("error") or "unavailable"
-    from wiretap.providers.errors import catalog_error_message, is_auth_error
-
-    if is_auth_error(str(reason)):
-        ui.warn(
-            catalog_error_message(
-                str(reason),
-                env_name=f"{platform.upper()}_API_KEY",
-                what="agents",
-            )
-        )
-    else:
-        ui.warn(f"Could not list {platform} agents ({reason}) — paste an id")
-    raw = typer.prompt(f"{id_label} id").strip()
-    if not raw:
-        ui.err(f"{id_label} id required")
-        raise typer.Exit(1)
-    return raw, None
 
 
 def _save_import(suite_name: str, suite, graph) -> None:
@@ -187,9 +103,7 @@ def register(app: typer.Typer) -> None:
 
     @import_app.command("retell")
     def import_retell(
-        agent_id: str | None = typer.Option(
-            None, "--agent-id", help=_AGENT_ID_HELP
-        ),
+        agent_id: str = typer.Option(..., "--agent-id"),
         name: str = typer.Option("retell", "--name", help="Local suite name."),
         api_key: str | None = typer.Option(None, "--api-key", help=_API_KEY_HELP),
         categories: str = typer.Option(
@@ -198,19 +112,10 @@ def register(app: typer.Typer) -> None:
         tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
         smoke_only: bool = typer.Option(False, "--smoke-only", help=_SMOKE_HELP),
     ) -> None:
-        """Fetch Retell agent → suite + category tests.
-
-        Omit ``--agent-id`` to pick from your live Retell agents (↑↓ search).
-        """
+        """Fetch Retell agent → suite + category tests."""
         from wiretap.importers import import_retell_agent
 
         _prepare_import("retell", api_key=api_key, smoke_only=smoke_only)
-        agent_id, agent_name = _resolve_remote_agent_id(
-            "retell", agent_id=agent_id, api_key=api_key
-        )
-        suite_name = _suite_name_for(
-            name, platform="retell", agent_id=agent_id, agent_name=agent_name
-        )
         suite, graph = _run_import(f"retell {agent_id}", lambda: import_retell_agent(agent_id))
         _maybe_generate(
             suite,
@@ -219,14 +124,12 @@ def register(app: typer.Typer) -> None:
             tests_per_category=tests_per_category,
             smoke_only=smoke_only,
         )
-        _save_import(suite_name, suite, graph)
-        print(f"Next: [bold]wiretap simulate -s {suite_name} --all[/bold]")
+        _save_import(name, suite, graph)
+        print(f"Next: [bold]wiretap simulate -s {name} --all[/bold]")
 
     @import_app.command("vapi")
     def import_vapi(
-        assistant_id: str | None = typer.Option(
-            None, "--assistant-id", help=_AGENT_ID_HELP
-        ),
+        assistant_id: str = typer.Option(..., "--assistant-id"),
         name: str = typer.Option("vapi", "--name"),
         api_key: str | None = typer.Option(None, "--api-key", help=_API_KEY_HELP),
         categories: str = typer.Option(
@@ -235,25 +138,11 @@ def register(app: typer.Typer) -> None:
         tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
         smoke_only: bool = typer.Option(False, "--smoke-only", help=_SMOKE_HELP),
     ) -> None:
-        """Fetch Vapi assistant → suite + category tests.
-
-        Omit ``--assistant-id`` to pick from your live Vapi assistants.
-        """
+        """Fetch Vapi assistant → suite + category tests."""
         from wiretap.importers import import_vapi_assistant
 
         _prepare_import("vapi", api_key=api_key, smoke_only=smoke_only)
-        assistant_id, agent_name = _resolve_remote_agent_id(
-            "vapi",
-            agent_id=assistant_id,
-            api_key=api_key,
-            id_label="Assistant",
-        )
-        suite_name = _suite_name_for(
-            name, platform="vapi", agent_id=assistant_id, agent_name=agent_name
-        )
-        suite, graph = _run_import(
-            f"vapi {assistant_id}", lambda: import_vapi_assistant(assistant_id)
-        )
+        suite, graph = _run_import(f"vapi {assistant_id}", lambda: import_vapi_assistant(assistant_id))
         _maybe_generate(
             suite,
             graph,
@@ -261,8 +150,8 @@ def register(app: typer.Typer) -> None:
             tests_per_category=tests_per_category,
             smoke_only=smoke_only,
         )
-        _save_import(suite_name, suite, graph)
-        print(f"Next: [bold]wiretap simulate -s {suite_name} --all[/bold]")
+        _save_import(name, suite, graph)
+        print(f"Next: [bold]wiretap simulate -s {name} --all[/bold]")
 
     @import_app.command("bland")
     def import_bland(
@@ -295,9 +184,7 @@ def register(app: typer.Typer) -> None:
 
     @import_app.command("elevenlabs")
     def import_elevenlabs(
-        agent_id: str | None = typer.Option(
-            None, "--agent-id", help=_AGENT_ID_HELP
-        ),
+        agent_id: str = typer.Option(..., "--agent-id"),
         name: str = typer.Option("elevenlabs", "--name"),
         api_key: str | None = typer.Option(None, "--api-key", help=_API_KEY_HELP),
         categories: str = typer.Option(
@@ -306,22 +193,11 @@ def register(app: typer.Typer) -> None:
         tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
         smoke_only: bool = typer.Option(False, "--smoke-only", help=_SMOKE_HELP),
     ) -> None:
-        """Fetch ElevenLabs Conversational AI agent → suite + category tests.
-
-        Omit ``--agent-id`` to pick from your live ElevenLabs agents.
-        """
+        """Fetch ElevenLabs Conversational AI agent → suite + category tests."""
         from wiretap.importers import import_elevenlabs_agent
 
         _prepare_import("elevenlabs", api_key=api_key, smoke_only=smoke_only)
-        agent_id, agent_name = _resolve_remote_agent_id(
-            "elevenlabs", agent_id=agent_id, api_key=api_key
-        )
-        suite_name = _suite_name_for(
-            name, platform="elevenlabs", agent_id=agent_id, agent_name=agent_name
-        )
-        suite, graph = _run_import(
-            f"elevenlabs {agent_id}", lambda: import_elevenlabs_agent(agent_id)
-        )
+        suite, graph = _run_import(f"elevenlabs {agent_id}", lambda: import_elevenlabs_agent(agent_id))
         _maybe_generate(
             suite,
             graph,
@@ -329,8 +205,8 @@ def register(app: typer.Typer) -> None:
             tests_per_category=tests_per_category,
             smoke_only=smoke_only,
         )
-        _save_import(suite_name, suite, graph)
-        print(f"Next: [bold]wiretap simulate -s {suite_name} --all[/bold]")
+        _save_import(name, suite, graph)
+        print(f"Next: [bold]wiretap simulate -s {name} --all[/bold]")
 
     @import_app.command("livekit")
     def import_livekit(

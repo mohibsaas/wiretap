@@ -11,9 +11,7 @@ from typing import Any
 import httpx
 
 from wiretap.providers.audio_io import pcm_s16le_to_wav
-from wiretap.providers.catalog import default_voice_for
 from wiretap.providers.env import require_env
-from wiretap.providers.http_retry import with_http_retries
 from wiretap.providers.speech import AudioBuffer, SpeechToTextProvider, TextToSpeechProvider
 
 
@@ -37,22 +35,19 @@ class OpenAICompatTTS(TextToSpeechProvider):
         self.voice = voice
 
     async def synthesize(self, text: str) -> AudioBuffer:
-        async def _once() -> AudioBuffer:
-            async with httpx.AsyncClient(base_url=self.base_url, timeout=60.0) as client:
-                resp = await client.post(
-                    "/audio/speech",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={
-                        "model": self.model,
-                        "voice": self.voice,
-                        "input": text,
-                        "response_format": "pcm",
-                    },
-                )
-                resp.raise_for_status()
-                return AudioBuffer(pcm=resp.content, sample_rate=24_000)
-
-        return await with_http_retries(_once, label="tts")
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=60.0) as client:
+            resp = await client.post(
+                "/audio/speech",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "model": self.model,
+                    "voice": self.voice,
+                    "input": text,
+                    "response_format": "pcm",
+                },
+            )
+            resp.raise_for_status()
+            return AudioBuffer(pcm=resp.content, sample_rate=24_000)
 
 
 class OpenAICompatSTT(SpeechToTextProvider):
@@ -63,22 +58,18 @@ class OpenAICompatSTT(SpeechToTextProvider):
 
     async def transcribe(self, audio: AudioBuffer) -> str:
         wav = pcm_s16le_to_wav(audio.pcm, sample_rate=audio.sample_rate, channels=audio.channels)
-
-        async def _once() -> str:
-            async with httpx.AsyncClient(base_url=self.base_url, timeout=60.0) as client:
-                files = {"file": ("audio.wav", wav, "audio/wav")}
-                data = {"model": self.model}
-                resp = await client.post(
-                    "/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    files=files,
-                    data=data,
-                )
-                resp.raise_for_status()
-                payload = resp.json()
-                return str(payload.get("text", ""))
-
-        return await with_http_retries(_once, label="stt")
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=60.0) as client:
+            files = {"file": ("audio.wav", wav, "audio/wav")}
+            data = {"model": self.model}
+            resp = await client.post(
+                "/audio/transcriptions",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                files=files,
+                data=data,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            return str(payload.get("text", ""))
 
 
 # ---------------------------------------------------------------------------
@@ -173,90 +164,26 @@ class ElevenLabsTTS(TextToSpeechProvider):
         *,
         api_key: str,
         voice: str = "21m00Tcm4TlvDq8ikWAM",
-        # monolingual_v1 / multilingual_v1 were removed by ElevenLabs (HTTP 400).
-        model: str = "eleven_flash_v2_5",
+        model: str = "eleven_monolingual_v1",
     ) -> None:
         self.api_key = api_key
         self.voice = voice
-        self.model = _elevenlabs_tts_model(model)
+        self.model = model
 
     async def synthesize(self, text: str) -> AudioBuffer:
-        async def _once() -> AudioBuffer:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(
-                    f"https://api.elevenlabs.io/v1/text-to-speech/{self.voice}",
-                    params={"output_format": "pcm_24000"},
-                    headers={
-                        "xi-api-key": self.api_key,
-                        "Content-Type": "application/json",
-                    },
-                    json={"text": text, "model_id": self.model},
-                )
-                if resp.status_code in {408, 429, 500, 502, 503, 504}:
-                    resp.raise_for_status()
-                if resp.is_error:
-                    raise RuntimeError(_elevenlabs_error_message(resp, what="TTS"))
-                return AudioBuffer(pcm=resp.content, sample_rate=24_000)
-
-        return await with_http_retries(_once, label="elevenlabs-tts")
-
-
-def _elevenlabs_tts_model(model: str | None) -> str:
-    """Map removed ElevenLabs TTS models to a supported default."""
-    name = (model or "").strip() or "eleven_flash_v2_5"
-    if name in {"eleven_monolingual_v1", "eleven_multilingual_v1"}:
-        return "eleven_flash_v2_5"
-    return name
-
-
-def _elevenlabs_error_message(resp: httpx.Response, *, what: str) -> str:
-    """Safe provider error for operators (no API keys / raw dumps)."""
-    detail = ""
-    try:
-        payload = resp.json()
-        raw = payload.get("detail") if isinstance(payload, dict) else None
-        if isinstance(raw, dict):
-            detail = str(raw.get("message") or raw.get("code") or "").strip()
-        elif isinstance(raw, str):
-            detail = raw.strip()
-        elif isinstance(payload, dict):
-            detail = str(payload.get("message") or "").strip()
-    except Exception:
-        detail = ""
-    if detail:
-        return f"ElevenLabs {what} failed ({resp.status_code}): {detail[:240]}"
-    return f"ElevenLabs {what} failed ({resp.status_code})"
-
-
-class ElevenLabsSTT(SpeechToTextProvider):
-    """ElevenLabs Scribe batch STT (``scribe_v2``)."""
-
-    def __init__(self, *, api_key: str, model: str = "scribe_v2") -> None:
-        self.api_key = api_key
-        self.model = model
-        self._client = httpx.AsyncClient(timeout=120.0)
-
-    async def aclose(self) -> None:
-        await self._client.aclose()
-
-    async def transcribe(self, audio: AudioBuffer) -> str:
-        wav = pcm_s16le_to_wav(audio.pcm, sample_rate=audio.sample_rate, channels=audio.channels)
-
-        async def _once() -> str:
-            resp = await self._client.post(
-                "https://api.elevenlabs.io/v1/speech-to-text",
-                headers={"xi-api-key": self.api_key},
-                files={"file": ("audio.wav", wav, "audio/wav")},
-                data={"model_id": self.model},
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{self.voice}",
+                params={"output_format": "pcm_24000"},
+                headers={
+                    "xi-api-key": self.api_key,
+                    "Content-Type": "application/json",
+                    "Accept": "audio/pcm",
+                },
+                json={"text": text, "model_id": self.model},
             )
-            if resp.status_code in {408, 429, 500, 502, 503, 504}:
-                resp.raise_for_status()
-            if resp.is_error:
-                raise RuntimeError(_elevenlabs_error_message(resp, what="STT"))
-            payload = resp.json()
-            return str(payload.get("text") or "")
-
-        return await with_http_retries(_once, label="elevenlabs-stt")
+            resp.raise_for_status()
+            return AudioBuffer(pcm=resp.content, sample_rate=24_000)
 
 
 class AssemblyAISTT(SpeechToTextProvider):
@@ -441,41 +368,38 @@ class PlayHTTTS(TextToSpeechProvider):
 
 def build_tts(provider: str, voice: str | None = None) -> TextToSpeechProvider:
     name = (provider or "pyai").lower().strip()
-    voice = (voice or "").strip() or default_voice_for(name)
+    voice = (voice or "").strip() or None
 
     if name == "pyai":
         return OpenAICompatTTS(
             api_key=require_env("PYAI_API_KEY"),
             base_url="https://api.pyai.com/v1",
             model="pyai-voice",
-            voice=voice,
+            voice=voice or "alloy",
         )
     if name in {"openai", "openai_tts"}:
         return OpenAICompatTTS(
             api_key=require_env("OPENAI_API_KEY"),
             base_url="https://api.openai.com/v1",
             model="gpt-4o-mini-tts",
-            voice=voice,
+            voice=voice or "alloy",
         )
     if name == "deepgram":
-        return DeepgramTTS(
-            api_key=require_env("DEEPGRAM_API_KEY"),
-            model=voice or default_voice_for("deepgram"),
-        )
+        return DeepgramTTS(api_key=require_env("DEEPGRAM_API_KEY"))
     if name == "cartesia":
         return CartesiaTTS(
             api_key=require_env("CARTESIA_API_KEY"),
-            voice=voice,
+            voice=voice or "79a125e8-cd45-4c13-8a67-188112f4dd22",
         )
     if name == "elevenlabs":
         return ElevenLabsTTS(
             api_key=require_env("ELEVENLABS_API_KEY"),
-            voice=voice,
+            voice=voice or "21m00Tcm4TlvDq8ikWAM",
         )
     if name == "lmnt":
-        return LmntTTS(api_key=require_env("LMNT_API_KEY"), voice=voice)
+        return LmntTTS(api_key=require_env("LMNT_API_KEY"), voice=voice or "lily")
     if name == "rime":
-        return RimeTTS(api_key=require_env("RIME_API_KEY"), voice=voice)
+        return RimeTTS(api_key=require_env("RIME_API_KEY"), voice=voice or "luna")
     if name == "playht":
         user = os.environ.get("PLAYHT_USER_ID", "").strip()
         if not user:
@@ -483,7 +407,7 @@ def build_tts(provider: str, voice: str | None = None) -> TextToSpeechProvider:
         return PlayHTTTS(
             api_key=require_env("PLAYHT_API_KEY"),
             user_id=user,
-            voice=voice,
+            voice=voice or "s3://voice-cloning-zero-shot/default",
         )
     raise ValueError(
         f"Unknown TTS provider: {provider!r}. "
@@ -508,8 +432,6 @@ def build_stt(provider: str) -> SpeechToTextProvider:
         )
     if name == "deepgram":
         return DeepgramSTT(api_key=require_env("DEEPGRAM_API_KEY"))
-    if name == "elevenlabs":
-        return ElevenLabsSTT(api_key=require_env("ELEVENLABS_API_KEY"))
     if name == "assemblyai":
         return AssemblyAISTT(api_key=require_env("ASSEMBLYAI_API_KEY"))
     if name == "gladia":
@@ -518,7 +440,7 @@ def build_stt(provider: str) -> SpeechToTextProvider:
         return GroqSTT(api_key=require_env("GROQ_API_KEY"))
     raise ValueError(
         f"Unknown STT provider: {provider!r}. "
-        "Use pyai, openai, deepgram, elevenlabs, assemblyai, gladia, or groq."
+        "Use pyai, openai, deepgram, assemblyai, gladia, or groq."
     )
 
 

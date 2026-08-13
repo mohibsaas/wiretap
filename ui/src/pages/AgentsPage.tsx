@@ -1,59 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowUpRight, Plus } from "lucide-react";
-import { PageHeader } from "@/components/PageHeader";
-import { TruncatedText } from "@/components/TruncatedText";
-import { Button } from "@/components/ui/button";
 import { client, type AgentRow } from "@/lib/api";
-import { cn } from "@/lib/utils";
-
-function providerLabel(platform?: string | null): string {
-  if (!platform) return "—";
-  const map: Record<string, string> = {
-    retell: "Retell",
-    vapi: "Vapi",
-    elevenlabs: "ElevenLabs",
-    livekit: "LiveKit",
-    bland: "Bland",
-    bolna: "Bolna",
-    synthflow: "Synthflow",
-  };
-  const key = platform.toLowerCase();
-  return map[key] || platform;
-}
-
-function agentDisplayName(a: AgentRow): string {
-  return a.name || a.agent_id || a.id || a.suite || "Untitled agent";
-}
-
-function agentIdLabel(a: AgentRow): string {
-  const id = a.agent_id || a.id;
-  if (!id) return "—";
-  if (a.platform) return `${a.platform}/${id}`;
-  return id;
-}
-
-function agentSubtitle(a: AgentRow): string {
-  const parts: string[] = [];
-  if (a.suite) parts.push(a.suite);
-  if (typeof a.scenario_count === "number") {
-    parts.push(
-      `${a.scenario_count} scenario${a.scenario_count === 1 ? "" : "s"}`,
-    );
-  }
-  if (a.transport) parts.push(a.transport);
-  return parts.join(" · ") || "Local suite agent";
-}
-
-function agentStatus(a: AgentRow): {
-  label: string;
-  tone: "pass" | "warn" | "muted";
-} {
-  if (a.connected || a.agent_id) {
-    return { label: "Ready", tone: "pass" };
-  }
-  return { label: "Incomplete", tone: "warn" };
-}
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export function AgentsPage() {
   const [agents, setAgents] = useState<AgentRow[]>([]);
@@ -66,155 +16,89 @@ export function AgentsPage() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  const meta = useMemo(() => {
-    const n = agents.length;
-    return `${n} agent${n === 1 ? "" : "s"}`;
-  }, [agents.length]);
-
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Agents"
-        meta={meta}
-        subtitle="The voice agents whose lines you tap."
-        action={
-          <Button asChild className="rounded-full">
-            <Link to="/onboard?again=1">
-              <Plus data-icon="inline-start" />
-              Add agent
-            </Link>
-          </Button>
-        }
-      />
-
-      {error && <p className="text-sm text-fail">{error}</p>}
-
-      <div className="overflow-x-auto rounded-[14px] border border-border bg-card">
-        <div className="min-w-[720px]">
-        <div
-          className="grid gap-0 border-b border-border bg-[var(--wt-section)] px-5 py-2.5 text-[10.5px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase"
-          style={{
-            gridTemplateColumns:
-              "minmax(180px,1.4fr) minmax(140px,1.2fr) 120px 110px minmax(120px,1fr) 56px",
-          }}
-        >
-          <div>Agent</div>
-          <div>ID</div>
-          <div>Provider</div>
-          <div>Status</div>
-          <div>Suite</div>
-          <div className="text-right">Actions</div>
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Agents</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Live agents discovered from local suites. Each suite embeds one default
+            agent; you can run any suite against another agent at simulate time.
+          </p>
         </div>
-
-        {agents.length === 0 && !error ? (
-          <div className="px-5 py-10 text-sm text-muted-foreground text-pretty">
-            No agents yet. Use{" "}
-            <Link
-              to="/onboard?again=1"
-              className="font-medium text-foreground underline-offset-2 hover:underline"
+        <Button asChild variant="outline">
+          <Link to="/onboard?again=1">Add agent</Link>
+        </Button>
+      </div>
+      {error && <p className="text-sm text-fail">{error}</p>}
+      <Card>
+        <CardHeader>
+          <CardTitle>Connected</CardTitle>
+        </CardHeader>
+        <CardContent className="divide-y divide-border p-0">
+          {agents.length === 0 && (
+            <p className="p-4 text-sm text-muted-foreground">
+              No agents yet. Use <strong>Add agent</strong> (onboarding) or{" "}
+              <code className="font-mono text-xs">wiretap import retell|vapi</code>,
+              then generate tests with onboarding or{" "}
+              <code className="font-mono text-xs">wiretap suite generate</code>.
+            </p>
+          )}
+          {agents.map((a, i) => (
+            <div
+              key={`${a.id}-${a.suite}-${i}`}
+              className="flex items-center justify-between gap-4 px-4 py-3"
             >
-              Add agent
-            </Link>{" "}
-            or import from the CLI, then generate a suite.
-          </div>
-        ) : (
-          agents.map((a, i) => {
-            const status = agentStatus(a);
-            const name = agentDisplayName(a);
-            const id = agentIdLabel(a);
-            return (
-              <div
-                key={`${a.id}-${a.suite}-${i}`}
-                className="grid items-center gap-0 border-b border-border px-5 py-3.5 last:border-b-0 transition-colors hover:bg-[var(--wt-section)]"
-                style={{
-                  gridTemplateColumns:
-                    "minmax(180px,1.4fr) minmax(140px,1.2fr) 120px 110px minmax(120px,1fr) 56px",
-                }}
-              >
-                <div className="min-w-0 pr-3">
-                  <TruncatedText
-                    text={name}
-                    className="text-[13.5px] font-semibold leading-snug text-foreground"
-                  />
-                  <TruncatedText
-                    text={agentSubtitle(a)}
-                    className="mt-0.5 text-xs leading-snug text-[var(--wt-text-muted)]"
-                  />
+              <div>
+                <div className="font-medium">
+                  {a.name || a.agent_id || a.id || a.suite || "agent"}
                 </div>
-
-                <div className="min-w-0 pr-3">
-                  <TruncatedText
-                    text={id}
-                    className="font-mono text-[12.5px] text-muted-foreground"
-                  />
-                </div>
-
-                <div className="min-w-0 pr-3 text-[13px] text-muted-foreground">
-                  <TruncatedText text={providerLabel(a.platform)} />
-                </div>
-
-                <div className="pr-3">
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] font-semibold",
-                      status.tone === "pass" &&
-                        "border-[var(--wt-green-600)] bg-[var(--wt-green-100)] text-[var(--wt-green-700)]",
-                      status.tone === "warn" &&
-                        "border-border bg-[var(--wt-section)] text-foreground",
-                      status.tone === "muted" &&
-                        "border-border bg-muted text-muted-foreground",
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "size-[7px] rounded-full",
-                        status.tone === "pass" && "bg-pass",
-                        status.tone === "warn" && "bg-warn",
-                        status.tone === "muted" && "bg-muted-foreground",
-                      )}
-                    />
-                    {status.label}
-                  </span>
-                </div>
-
-                <div className="min-w-0 pr-3">
-                  {a.suite ? (
-                    <Link
-                      to={`/suites/${encodeURIComponent(a.suite)}`}
-                      className="block min-w-0"
-                    >
-                      <TruncatedText
-                        text={a.suite}
-                        className="font-mono text-[12.5px] text-foreground underline-offset-2 hover:underline"
-                      />
-                    </Link>
-                  ) : (
-                    <span className="text-[12.5px] text-muted-foreground">—</span>
-                  )}
-                </div>
-
-                <div className="flex justify-end">
-                  {a.suite ? (
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      asChild
-                      aria-label={`Open suite ${a.suite}`}
-                    >
-                      <Link to={`/suites/${encodeURIComponent(a.suite)}`}>
-                        <ArrowUpRight className="size-4 text-muted-foreground" />
-                      </Link>
-                    </Button>
-                  ) : (
-                    <span className="text-[12.5px] text-muted-foreground">—</span>
-                  )}
+                <div className="text-xs text-muted-foreground">
+                  {[a.platform, a.agent_id || a.id, a.suite]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </div>
               </div>
-            );
-          })
-        )}
-        </div>
-      </div>
+              <div className="flex items-center gap-2">
+                {a.platform && <Badge variant="muted">{a.platform}</Badge>}
+                {a.suite && (
+                  <Link
+                    to={`/suites/${a.suite}`}
+                    className="text-sm text-accent underline-offset-2 hover:underline"
+                  >
+                    suite / generate
+                  </Link>
+                )}
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>How to add more</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            <strong className="text-foreground">UI:</strong> Add agent → connect
+            platform + agent id → generate category tests. Open a suite and use{" "}
+            <em>Run against agent</em> to point tests at a different agent.
+          </p>
+          <p>
+            <strong className="text-foreground">CLI:</strong>{" "}
+            <code className="font-mono text-xs">wiretap import retell --agent-id …</code>{" "}
+            then{" "}
+            <code className="font-mono text-xs">
+              wiretap suite generate -s SUITE -C emotional,compliance -n 5
+            </code>
+            . Reuse tests:{" "}
+            <code className="font-mono text-xs">
+              wiretap simulate -s SUITE --all --agent-from OTHER_SUITE
+            </code>
+            .
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

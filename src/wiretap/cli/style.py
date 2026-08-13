@@ -17,37 +17,18 @@ from rich.progress import (
     TextColumn,
     TimeElapsedColumn,
 )
+from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
 # Brand green (#13864E) — borders, headers, accents, success marks
 ACCENT = "#13864E"
-ACCENT_RGB = (19, 134, 78)
 OK = "#13864E"
 WARN = "yellow"
 ERR = "red"
 MUTED = "dim"
 
 console = Console()
-
-# Active wizard timeline (optional left rail for nested prompts).
-_active_timeline: "Timeline | None" = None
-
-
-def ansi_accent() -> str:
-    """Raw ANSI for brand green (picker / tty menus)."""
-    r, g, b = ACCENT_RGB
-    return f"\x1b[38;2;{r};{g};{b}m"
-
-
-def ansi_accent_bg() -> str:
-    """Raw ANSI background for brand green (selected picker row)."""
-    r, g, b = ACCENT_RGB
-    return f"\x1b[48;2;{r};{g};{b}m"
-
-
-def rail_active() -> bool:
-    return _active_timeline is not None
 
 
 def banner(title: str, subtitle: str = "") -> None:
@@ -65,35 +46,27 @@ def banner(title: str, subtitle: str = "") -> None:
             padding=(0, 1),
         )
     )
-    console.print()
 
 
 def step(num: int, total: int, title: str, *, detail: str = "") -> None:
-    """Numbered step with a short timeline stem for wizard stages."""
+    """Numbered step rule used by multi-stage wizards."""
+    label = Text()
+    label.append(f" {num}/{total} ", style=f"bold white on {ACCENT}")
+    label.append(" ")
+    label.append(title, style="bold")
     console.print()
-    mark = Text()
-    mark.append("● ", style=f"bold {ACCENT}")
-    mark.append(f"{num}/{total}", style=f"bold {ACCENT}")
-    mark.append("  ")
-    mark.append(title, style="bold")
-    console.print(mark)
+    console.print(label)
     if detail:
-        console.print(f"[{ACCENT}]│[/{ACCENT}]  [{MUTED}]{detail}[/{MUTED}]")
-    console.print(f"[{ACCENT}]│[/{ACCENT}]")
+        console.print(f"[{MUTED}]{detail}[/{MUTED}]")
+    console.print(Rule(style=f"dim {ACCENT}"))
 
 
 def ok(message: str) -> None:
-    if _active_timeline is not None:
-        _active_timeline.note(f"[bold {OK}]✓[/bold {OK}] {message}")
-    else:
-        console.print(f"[bold {OK}]✓[/bold {OK}] {message}")
+    console.print(f"[bold {OK}]✓[/bold {OK}] {message}")
 
 
 def warn(message: str) -> None:
-    if _active_timeline is not None:
-        _active_timeline.note(f"[bold {WARN}]![/bold {WARN}] [{WARN}]{message}[/{WARN}]")
-    else:
-        console.print(f"[bold {WARN}]![/bold {WARN}] [{WARN}]{message}[/{WARN}]")
+    console.print(f"[bold {WARN}]![/bold {WARN}] [{WARN}]{message}[/{WARN}]")
 
 
 def err(message: str) -> None:
@@ -101,93 +74,22 @@ def err(message: str) -> None:
 
 
 def info(message: str) -> None:
-    if _active_timeline is not None:
-        _active_timeline.note(message)
-    else:
-        console.print(f"[{ACCENT}]→[/{ACCENT}] {message}")
+    console.print(f"[{ACCENT}]→[/{ACCENT}] {message}")
 
 
 def muted(message: str) -> None:
-    if _active_timeline is not None:
-        _active_timeline.note(f"[{MUTED}]{message}[/{MUTED}]")
-    else:
-        console.print(f"[{MUTED}]{message}[/{MUTED}]")
-
-
-def rail_text(message: str = "") -> None:
-    """Print a line under the active timeline rail (or plain if none)."""
-    if _active_timeline is not None:
-        _active_timeline.note(message)
-    elif message:
-        console.print(message)
-
-
-@dataclass
-class Timeline:
-    """Left-rail timeline for a block of related init questions.
-
-    Nested under ``step()`` — uses ``├─`` (not another ``●``) so the hierarchy
-    stays one green rail.
-    """
-
-    title: str
-    _entered: bool = field(default=False, init=False, repr=False)
-    _closed: bool = field(default=False, init=False, repr=False)
-
-    def __enter__(self) -> Timeline:
-        global _active_timeline
-        console.print(f"[{ACCENT}]├─[/{ACCENT}] [bold]{self.title}[/bold]")
-        console.print(f"[{ACCENT}]│[/{ACCENT}]")
-        self._entered = True
-        _active_timeline = self
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        global _active_timeline
-        if _active_timeline is self:
-            _active_timeline = None
-        if self._entered and not self._closed:
-            console.print(f"[{ACCENT}]│[/{ACCENT}]")
-            console.print()
-
-    def group(self, label: str) -> None:
-        """Start a sub-section on the rail (LLM / Speech / …)."""
-        console.print(f"[{ACCENT}]│[/{ACCENT}]")
-        console.print(f"[{ACCENT}]│[/{ACCENT}]  [bold]{label}[/bold]")
-        console.print(f"[{ACCENT}]│[/{ACCENT}]")
-
-    def note(self, message: str = "") -> None:
-        if message:
-            console.print(f"[{ACCENT}]│[/{ACCENT}]  {message}")
-        else:
-            console.print(f"[{ACCENT}]│[/{ACCENT}]")
-
-    def finish(self, message: str) -> None:
-        console.print(f"[{ACCENT}]│[/{ACCENT}]")
-        console.print(
-            f"[{ACCENT}]└─[/{ACCENT}] [bold {OK}]✓[/bold {OK}] {message}"
-        )
-        self._closed = True
-        console.print()
-
-
-def timeline(title: str) -> Timeline:
-    return Timeline(title)
+    console.print(f"[{MUTED}]{message}[/{MUTED}]")
 
 
 @contextmanager
 def spinner(message: str) -> Iterator[None]:
-    """Animated dots loader — keeps the green rail when a timeline is active."""
-    status_msg = f"[{ACCENT}]{message}[/{ACCENT}]"
-    if _active_timeline is not None:
-        # One rail line only — avoid blank │ noise around the spinner.
-        with console.status(status_msg, spinner="dots", spinner_style=ACCENT):
-            yield
-        return
-    console.print()
-    with console.status(status_msg, spinner="dots", spinner_style=ACCENT):
+    """Animated loader for long-running steps (LLM generate, import, …)."""
+    with console.status(
+        f"[{ACCENT}]{message}[/{ACCENT}]",
+        spinner="dots",
+        spinner_style=ACCENT,
+    ):
         yield
-    console.print()
 
 
 @dataclass
@@ -445,6 +347,10 @@ def print_scenario_detail(
     if rubric:
         rows.add_row("Rubric", rubric)
 
+    expected_tools = list(getattr(scenario, "expected_tools", None) or [])
+    if expected_tools:
+        rows.add_row("Expected tools", " · ".join(str(t) for t in expected_tools))
+
     rules = getattr(scenario, "rules", None)
     if rules is not None:
         excludes = list(getattr(rules, "excludes", None) or [])
@@ -510,6 +416,29 @@ def _match_scenarios(
     ]
 
 
+def tool_summary(artifact: Any) -> str:
+    """One-line tool verdict for a simulation, or '' when there is nothing to say.
+
+    Distinguishes "called nothing" from "could not observe" — reading an
+    unobservable capture as a tool failure is the trap this line exists to avoid.
+    """
+    meta = getattr(artifact, "meta", None) or {}
+    metrics = getattr(artifact, "metrics", None) or {}
+    capture = str(meta.get("tool_capture") or "")
+    if capture and capture != "ok":
+        expected = metrics.get("missing_tools") or []
+        # Only worth saying when the scenario actually expected something.
+        return "tools: not observable for this agent" if expected else ""
+    if capture != "ok":
+        return ""
+    called = int(metrics.get("tool_calls") or 0)
+    missing = [str(t) for t in (metrics.get("missing_tools") or [])]
+    parts = [f"{called} called"]
+    if missing:
+        parts.append(f"never called: {', '.join(missing)}")
+    return "tools: " + " · ".join(parts)
+
+
 def next_cmd(command: str, *, hint: str = "Next") -> None:
     console.print()
     console.print(f"[{MUTED}]{hint}:[/{MUTED}] [bold {ACCENT}]{command}[/bold {ACCENT}]")
@@ -565,14 +494,10 @@ def status_table(
 
 __all__ = [
     "ACCENT",
-    "ACCENT_RGB",
     "ERR",
     "MUTED",
     "OK",
     "WARN",
-    "Timeline",
-    "ansi_accent",
-    "ansi_accent_bg",
     "banner",
     "console",
     "err",
@@ -583,13 +508,11 @@ __all__ = [
     "platform_table",
     "print_scenario_detail",
     "print_suite_view",
-    "rail_active",
-    "rail_text",
     "scenario_progress",
     "spinner",
     "status_table",
     "step",
-    "timeline",
+    "tool_summary",
     "warn",
     "ScenarioGenProgress",
 ]

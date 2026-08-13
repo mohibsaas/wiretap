@@ -13,7 +13,6 @@ __all__ = [
     "AudioBuffer",
     "SpeechToTextProvider",
     "TextToSpeechProvider",
-    "acomplete",
     "build_stt",
     "build_tts",
     "complete",
@@ -24,8 +23,8 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    if name in {"complete", "acomplete"}:
-        from wiretap.providers import llm
+    if name == "complete":
+        from wiretap.providers.llm import complete
 
-        return getattr(llm, name)
+        return complete
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

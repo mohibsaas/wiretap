@@ -1,29 +1,22 @@
 """Retell live transport — create-web-call + LiveKit room.
 
-Turn detection uses the shared ``AgentTurnGate`` (energy VAD + batch STT),
-same as other live audio transports — not Retell-specific talk events.
-After hangup, Get Call supplies the judge transcript when available.
+Joins Retell's LiveKit cloud (same as the official web SDK), publishes TTS audio
+for caller lines, and reads agent text from LiveKit data-channel transcript updates.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 
 import httpx
 
-from wiretap.models import AgentTarget, TurnRecord
+from wiretap.models import AgentTarget
 from wiretap.providers.env import require_env
 from wiretap.providers.tts import TTS_SAMPLE_RATE, synthesize_pcm
-from wiretap.transport.audio_util import pad_pcm16_silence
-from wiretap.transport.base import Inbound, Transport
-from wiretap.transport.transcript_util import normalize_agent_text, utterance_timing_ms
-from wiretap.transport.turn_gate import (
-    AgentTurnGate,
-    receive_coalesced,
-    speak_with_gate_mute,
-)
-from wiretap.transport.livekit_util import disconnect_livekit_room, schedule_on_loop
+from wiretap.transport.base import CallRef, Inbound, Transport
+from wiretap.transport.transcript_util import accept_final_utterance
 
 RETELL_API = "https://api.retellai.com"
 RETELL_LIVEKIT_URL = "wss://retell-ai-4ihahnq7.livekit.cloud"
@@ -34,21 +27,21 @@ class RetellTransport(Transport):
     _room: object | None = None
     _audio_source: object | None = None
     _pending: asyncio.Queue[Inbound] = field(default_factory=asyncio.Queue)
+    _seen_agent: set[str] = field(default_factory=set)
+    _draft_agent: str = ""
+    _agent_talking: bool = False
     _connected: bool = False
     _call_id: str | None = None
-    _api_key: str | None = None
     _loop: asyncio.AbstractEventLoop | None = None
     _tts_name: str = "pyai"
-    _stt_name: str = "pyai"
     _voice: str | None = "alloy"
-    _gate: AgentTurnGate | None = None
 
     def configure_speech(self, *, stt: str, tts: str, voice: str | None) -> None:
-        self._stt_name = stt or self._stt_name
         self._tts_name = tts or self._tts_name
         self._voice = voice or self._voice
-        if self._gate is not None:
-            self._gate.configure(stt=self._stt_name)
+
+    def call_ref(self) -> CallRef | None:
+        return CallRef(platform="retell", call_id=self._call_id) if self._call_id else None
 
     async def connect(self, target: AgentTarget) -> None:
         try:
@@ -63,7 +56,6 @@ class RetellTransport(Transport):
         if not agent_id:
             raise ValueError("Retell transport requires agent.agent_id.")
         key = require_env(target.token_env or "RETELL_API_KEY")
-        self._api_key = key
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
@@ -102,12 +94,9 @@ class RetellTransport(Transport):
         room = rtc.Room()
         self._room = room
 
-        self._gate = AgentTurnGate(
-            stt_name=self._stt_name,
-            on_utterance=self._on_agent_utterance,
-        )
-        self._sync_gate_elapsed()
-        await self._gate.start()
+        @room.on("data_received")
+        def _on_data(data: rtc.DataPacket) -> None:
+            self._handle_data(bytes(data.data))
 
         @room.on("track_subscribed")
         def _on_track(
@@ -116,13 +105,13 @@ class RetellTransport(Transport):
             _participant: rtc.RemoteParticipant,
         ) -> None:
             if track.kind == rtc.TrackKind.KIND_AUDIO:
-                schedule_on_loop(
-                    self._loop, lambda: self._consume_remote_audio(track)
-                )
-
-        @room.on("disconnected")
-        def _on_disconnected(*_args: object) -> None:
-            schedule_on_loop(self._loop, self._mark_hung_up)
+                loop = self._loop
+                if loop and loop.is_running():
+                    loop.call_soon_threadsafe(
+                        lambda: asyncio.ensure_future(
+                            self._consume_remote_audio(track), loop=loop
+                        )
+                    )
 
         try:
             await asyncio.wait_for(room.connect(RETELL_LIVEKIT_URL, access_token), timeout=30.0)
@@ -138,174 +127,77 @@ class RetellTransport(Transport):
         self._audio_source = source
         self._connected = True
 
+        # Wait briefly for agent greeting on the data channel
         try:
-            inbound = await asyncio.wait_for(self._pending.get(), timeout=20.0)
+            inbound = await asyncio.wait_for(self._pending.get(), timeout=15.0)
+            # put it back so receive() gets it
             await self._pending.put(inbound)
         except TimeoutError:
-            pass
+            # Some sessions omit stop events; flush any open draft.
+            if self._draft_agent:
+                self._commit_draft()
 
     async def send_text(self, text: str) -> None:
+        # Avoid barging into unfinished agent speech; finalize any open draft.
+        for _ in range(50):  # up to ~5s
+            if not self._agent_talking:
+                if self._draft_agent:
+                    self._commit_draft()
+                break
+            await asyncio.sleep(0.1)
+        else:
+            if self._draft_agent:
+                self._commit_draft()
+
         if not self._connected or self._audio_source is None:
             raise RuntimeError("Retell transport not connected")
         from livekit import rtc
 
-        # Start TTS immediately so synthesis overlaps gate mute setup.
-        pcm_task = asyncio.create_task(
-            synthesize_pcm(
-                text, voice=self._voice or "alloy", provider=self._tts_name
+        pcm = await synthesize_pcm(text, voice=self._voice or "alloy", provider=self._tts_name)
+        self._record(pcm, sample_rate=TTS_SAMPLE_RATE)
+        # Push PCM16 as AudioFrames
+        samples_per_channel = TTS_SAMPLE_RATE // 50  # 20ms frames
+        offset = 0
+        while offset + samples_per_channel * 2 <= len(pcm):
+            chunk = pcm[offset : offset + samples_per_channel * 2]
+            offset += samples_per_channel * 2
+            frame = rtc.AudioFrame(
+                data=chunk,
+                sample_rate=TTS_SAMPLE_RATE,
+                num_channels=1,
+                samples_per_channel=samples_per_channel,
             )
-        )
-
-        async def _publish() -> None:
-            assert self._audio_source is not None
-            pcm = await pcm_task
-            if len(pcm) < TTS_SAMPLE_RATE // 5:  # < ~0.2s of audio
-                raise RuntimeError(
-                    "Caller TTS returned empty/too-short audio — "
-                    "check speech.tts provider and voice id"
-                )
-            pcm = pad_pcm16_silence(pcm, sample_rate=TTS_SAMPLE_RATE)
-            self._record(pcm, sample_rate=TTS_SAMPLE_RATE)
-            samples_per_channel = TTS_SAMPLE_RATE // 50  # 20ms frames
-            offset = 0
-            while offset + samples_per_channel * 2 <= len(pcm):
-                chunk = pcm[offset : offset + samples_per_channel * 2]
-                offset += samples_per_channel * 2
-                frame = rtc.AudioFrame(
-                    data=chunk,
-                    sample_rate=TTS_SAMPLE_RATE,
-                    num_channels=1,
-                    samples_per_channel=samples_per_channel,
-                )
-                await self._audio_source.capture_frame(frame)
-            rem = pcm[offset:]
-            if rem:
-                pad = rem + b"\x00" * (samples_per_channel * 2 - len(rem))
-                frame = rtc.AudioFrame(
-                    data=pad[: samples_per_channel * 2],
-                    sample_rate=TTS_SAMPLE_RATE,
-                    num_channels=1,
-                    samples_per_channel=samples_per_channel,
-                )
-                await self._audio_source.capture_frame(frame)
-
-        await speak_with_gate_mute(self._gate, _publish)
+            await self._audio_source.capture_frame(frame)
+        # Remainder
+        rem = pcm[offset:]
+        if rem:
+            pad = rem + b"\x00" * (samples_per_channel * 2 - len(rem))
+            frame = rtc.AudioFrame(
+                data=pad[: samples_per_channel * 2],
+                sample_rate=TTS_SAMPLE_RATE,
+                num_channels=1,
+                samples_per_channel=samples_per_channel,
+            )
+            await self._audio_source.capture_frame(frame)
 
     async def receive(self) -> Inbound:
-        return await receive_coalesced(
-            self._pending, self._gate, connected=self._connected
-        )
-
-    async def _mark_hung_up(self) -> None:
-        if not self._connected:
-            return
-        self._connected = False
-        await self._pending.put(Inbound(hung_up=True))
+        try:
+            return await asyncio.wait_for(self._pending.get(), timeout=45.0)
+        except TimeoutError:
+            return Inbound(hung_up=True)
 
     async def hangup(self) -> None:
-        # Drop loop ref first so FFI/thread callbacks stop scheduling work.
         self._connected = False
-        self._loop = None
-        gate = self._gate
-        self._gate = None
+        if self._draft_agent:
+            self._commit_draft()
         room = self._room
         self._room = None
         self._audio_source = None
-        if gate is not None:
-            try:
-                await asyncio.shield(gate.stop())
-            except Exception:
-                pass
-        await disconnect_livekit_room(room)
-
-    async def fetch_final_transcript(self) -> list[TurnRecord] | None:
-        """Pull Retell's completed call transcript (preferred for judging)."""
-        call_id = self._call_id
-        key = self._api_key
-        if not call_id or not key:
-            return None
-
-        payload: dict | None = None
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            for _ in range(15):
-                resp = await client.get(
-                    f"{RETELL_API}/v2/get-call/{call_id}",
-                    headers={"Authorization": f"Bearer {key}"},
-                )
-                if resp.is_error:
-                    await asyncio.sleep(0.6)
-                    continue
-                payload = resp.json()
-                status = str(payload.get("call_status") or "").lower()
-                has_obj = isinstance(payload.get("transcript_object"), list)
-                has_text = bool(str(payload.get("transcript") or "").strip())
-                if status in {"ended", "error", "analyzed"} and (has_obj or has_text):
-                    break
-                if has_obj or has_text:
-                    break
-                await asyncio.sleep(0.6)
-            else:
-                return None
-
-        if not payload:
-            return None
-
-        turns: list[TurnRecord] = []
-        obj = payload.get("transcript_object")
-        if isinstance(obj, list) and obj:
-            for utt in obj:
-                if not isinstance(utt, dict):
-                    continue
-                role = str(utt.get("role") or "").lower()
-                content = normalize_agent_text(str(utt.get("content") or ""))
-                if not content:
-                    continue
-                start_ms, end_ms = utterance_timing_ms(utt)
-                if role == "agent":
-                    turns.append(
-                        TurnRecord(
-                            role="agent",
-                            text=content,
-                            start_ms=start_ms,
-                            end_ms=end_ms,
-                        )
-                    )
-                elif role == "user":
-                    turns.append(
-                        TurnRecord(
-                            role="user",
-                            text=content,
-                            start_ms=start_ms,
-                            end_ms=end_ms,
-                        )
-                    )
-            return turns or None
-
-        raw = str(payload.get("transcript") or "").strip()
-        if not raw:
-            return None
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            lower = line.lower()
-            if lower.startswith("agent:"):
-                turns.append(TurnRecord(role="agent", text=line.split(":", 1)[1].strip()))
-            elif lower.startswith("user:"):
-                turns.append(TurnRecord(role="user", text=line.split(":", 1)[1].strip()))
-        return turns or None
-
-    async def _on_agent_utterance(
-        self,
-        text: str,
-        start_ms: float | None = None,
-        end_ms: float | None = None,
-    ) -> None:
-        await self._pending.put(
-            Inbound(text=text, start_ms=start_ms, end_ms=end_ms)
-        )
+        if room is not None:
+            await room.disconnect()
 
     async def _consume_remote_audio(self, track: object) -> None:
+        """Best-effort capture of agent audio for evaluation playback."""
         try:
             from livekit import rtc
         except ImportError:
@@ -318,10 +210,79 @@ class RetellTransport(Transport):
                 if not self._connected:
                     break
                 frame = event.frame
-                pcm = bytes(frame.data)
-                rate = int(frame.sample_rate or 16_000)
-                self._record(pcm, sample_rate=rate)
-                if self._gate is not None:
-                    self._gate.push(pcm, sample_rate=rate)
+                self._record(bytes(frame.data), sample_rate=frame.sample_rate)
         except Exception:
+            # Recording must never break the call
             return
+
+    def _handle_data(self, raw: bytes) -> None:
+        """Process Retell LiveKit data-channel events.
+
+        ``update.transcript`` streams *growing* agent utterance text (interim).
+        Committing each update caused fragmented AGENT turns like
+        ``Hi,`` → ``Hi, thanks`` → ``Hi, thanks so much``.
+
+        Keep a draft from ``update``; enqueue only when the agent finishes
+        (``agent_stop_talking``), when the user turn starts, or on hangup.
+        """
+        try:
+            event = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return
+        if not isinstance(event, dict):
+            return
+
+        et = str(event.get("event_type") or "")
+        if et == "agent_start_talking":
+            self._agent_talking = True
+            return
+        if et == "agent_stop_talking":
+            self._agent_talking = False
+            self._commit_draft()
+            return
+        if et != "update":
+            return
+
+        transcript = event.get("transcript") or []
+        if not isinstance(transcript, list):
+            return
+
+        latest_agent = ""
+        last_role = ""
+        for utt in transcript:
+            if not isinstance(utt, dict):
+                continue
+            role = str(utt.get("role") or "")
+            content = str(utt.get("content") or "").strip()
+            if not content:
+                continue
+            last_role = role
+            if role == "agent":
+                latest_agent = content
+
+        if latest_agent:
+            # Distinct new utterance while a previous draft was still open.
+            if (
+                self._draft_agent
+                and latest_agent != self._draft_agent
+                and not latest_agent.startswith(self._draft_agent)
+                and not self._draft_agent.startswith(latest_agent)
+            ):
+                self._commit_draft()
+            self._draft_agent = latest_agent
+
+        # User turn in the rolling window ⇒ prior agent utterance is complete.
+        if last_role == "user" and self._draft_agent:
+            self._commit_draft()
+
+    def _commit_draft(self) -> None:
+        text = accept_final_utterance(self._draft_agent, self._seen_agent)
+        self._draft_agent = ""
+        if not text:
+            return
+        inbound = Inbound(text=text)
+        loop = self._loop
+        if loop and loop.is_running():
+            loop.call_soon_threadsafe(self._pending.put_nowait, inbound)
+        else:
+            self._pending.put_nowait(inbound)

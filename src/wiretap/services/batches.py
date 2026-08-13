@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 BatchStatus = Literal["pending", "running", "completed", "failed"]
 
 # Voice dials are slow; never let a single scenario hang the whole batch forever.
-DEFAULT_SCENARIO_TIMEOUT_S = 240.0
+DEFAULT_SCENARIO_TIMEOUT_S = 180.0
 
 
 def _now_iso() -> str:
@@ -31,7 +31,6 @@ class BatchRecord:
     status: BatchStatus = "pending"
     scenario_ids: list[str] = field(default_factory=list)
     concurrency: int = 1
-    pass_threshold: float = 0.7
     strict: bool = False
     results: list[SimulationArtifact] = field(default_factory=list)
     error: str | None = None
@@ -71,8 +70,6 @@ def start_batch(
     all_scenarios: bool = False,
     scenario_id: str | None = None,
     concurrency: int = 1,
-    force_concurrency: bool = False,
-    pass_threshold: float = 0.7,
     strict: bool = False,
     agent_id: str | None = None,
     platform: str | None = None,
@@ -82,12 +79,9 @@ def start_batch(
     scenario_timeout_s: float = DEFAULT_SCENARIO_TIMEOUT_S,
 ) -> BatchRecord:
     from wiretap.suite.agent_override import with_agent_override
-    from wiretap.services.onboard import apply_simulator_config
-    from wiretap.eval.concurrency import resolve_concurrency
 
     path = suite_path(suite, cwd)
     cfg = load_suite(path)
-    cfg = apply_simulator_config(cfg, cwd)
     cfg = with_agent_override(
         cfg,
         agent_id=agent_id,
@@ -108,19 +102,17 @@ def start_batch(
     elif not all_scenarios and len(cfg.scenarios) > 1:
         raise ValueError("Pass all_scenarios=True or scenario_id for multi-scenario suites")
 
-    conc, _note = resolve_concurrency(
-        concurrency,
-        transport=cfg.agent.transport.value,
-        platform=cfg.agent.platform,
-        force=force_concurrency,
-    )
+    # Live voice: keep concurrency low to avoid slamming Retell/Vapi.
+    is_voice = cfg.agent.transport.value != "text"
+    conc = max(1, concurrency)
+    if is_voice:
+        conc = min(conc, 2)
 
     batch = BatchRecord(
         batch_id=uuid.uuid4().hex,
         suite=path.stem,
         scenario_ids=[s.id for s in selected],
         concurrency=conc,
-        pass_threshold=pass_threshold,
         strict=strict,
         created_at=_now_iso(),
     )
@@ -137,7 +129,6 @@ def start_batch(
             path.stem,
             cwd,
             scenario_timeout_s=scenario_timeout_s,
-            pass_threshold=pass_threshold,
         )
     )
     return batch
@@ -151,11 +142,7 @@ async def _run_batch(
     cwd: Path | None,
     *,
     scenario_timeout_s: float = DEFAULT_SCENARIO_TIMEOUT_S,
-    pass_threshold: float | None = None,
 ) -> None:
-    threshold = (
-        batch.pass_threshold if pass_threshold is None else float(pass_threshold)
-    )
     batch.status = "running"
     batch._emit(
         {
@@ -197,7 +184,6 @@ async def _run_batch(
                         suite_id=suite_id,
                         batch_id=batch.batch_id,
                         cwd=cwd,
-                        pass_threshold=threshold,
                     ),
                     timeout=scenario_timeout_s,
                 )
@@ -298,7 +284,6 @@ def _persist_evaluation_run(batch: BatchRecord, cwd: Path | None) -> None:
                 "inconclusive": inconclusive,
                 "total": len(batch.scenario_ids),
                 "concurrency": batch.concurrency,
-                "pass_threshold": batch.pass_threshold,
             },
             cwd,
         )

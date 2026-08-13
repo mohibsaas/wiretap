@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from wiretap.models import AgentTarget, TransportKind
-from wiretap.transport.base import Inbound, Transport
+from wiretap.transport.base import CallRef, Inbound, Transport
 from wiretap.transport.text import TextEchoTransport
 
 
@@ -18,6 +18,13 @@ def _wants_text_fallback(target: AgentTarget) -> bool:
 def build_transport(target: AgentTarget) -> Transport:
     kind = target.transport
     platform = (target.platform or "").lower().strip()
+
+    # PSTN dials a phone number, so it works for any platform — the platform is
+    # only used afterwards, to fetch post-call artifacts.
+    if kind == TransportKind.PSTN:
+        from wiretap.transport.twilio_pstn import TwilioPstnTransport
+
+        return TwilioPstnTransport()
 
     # No platform → local stub (CI / dry-run)
     if not platform:
@@ -67,4 +74,4 @@ def build_transport(target: AgentTarget) -> Transport:
     )
 
 
-__all__ = ["Inbound", "TextEchoTransport", "Transport", "build_transport"]
+__all__ = ["CallRef", "Inbound", "TextEchoTransport", "Transport", "build_transport"]

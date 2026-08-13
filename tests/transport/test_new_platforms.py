@@ -34,9 +34,10 @@ def test_synthflow_factory() -> None:
 
 
 def test_bolna_deferred() -> None:
+    """Bolna has no native transport; only the generic PSTN dial reaches it."""
     try:
         build_transport(
-            AgentTarget(transport=TransportKind.PSTN, platform="bolna", agent_id="a1")
+            AgentTarget(transport=TransportKind.WEBRTC, platform="bolna", agent_id="a1")
         )
         raise AssertionError("expected NotImplementedError")
     except NotImplementedError as exc:

@@ -18,7 +18,7 @@ export function SuitesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-[22px] font-semibold tracking-[-0.005em]">Test Suites</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Test suites</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Local suites under .wiretap/suites/
         </p>

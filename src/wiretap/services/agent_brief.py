@@ -63,10 +63,6 @@ _SECRET_PATTERNS = (
     re.compile(r"\b[A-Fa-f0-9]{32,}\b"),
     re.compile(r"\b[A-Za-z0-9+/]{40,}={0,2}\b"),
 )
-# Assignment-style leaks ("password: hunter2", "api_key=…")
-_SECRET_ASSIGNMENT = re.compile(
-    r"(?i)\b(api[_-]?key|secret|token|password|authorization|bearer)\b\s*[:=]\s*\S+"
-)
 
 _GOAL_HINTS = ("your job", "your goal", "you should", "you must", "your task", "help the")
 _CONSTRAINT_HINTS = ("never", "do not", "don't", "must not", "always", "only if", "refuse")
@@ -78,8 +74,8 @@ def _redact_phone(match: re.Match[str]) -> str:
     return REDACTED if digits >= 9 else match.group(0)
 
 
-def sanitize_text(text: str, *, cap: int | None = None) -> str:
-    """Strip secrets and contact details, then optionally hard-cap the length.
+def sanitize_text(text: str, *, cap: int) -> str:
+    """Strip secrets and contact details, then hard-cap the length.
 
     Redaction runs before truncation so a cut cannot leave half a secret behind.
     Best-effort by design: the cap is what actually bounds the exposure.
@@ -87,7 +83,6 @@ def sanitize_text(text: str, *, cap: int | None = None) -> str:
     if not text:
         return ""
     out = _ENV_LINE.sub("", str(text))
-    out = _SECRET_ASSIGNMENT.sub(r"\1: [REDACTED]", out)
     for pattern in _SECRET_PATTERNS:
         out = pattern.sub(REDACTED, out)
     out = _CREDENTIALED_URL.sub(rf"\1{REDACTED}@", out)
@@ -95,7 +90,7 @@ def sanitize_text(text: str, *, cap: int | None = None) -> str:
     out = _PHONE.sub(_redact_phone, out)
     out = _DIGIT_RUN.sub(REDACTED, out)
     out = re.sub(r"\n{3,}", "\n\n", out).strip()
-    if cap is not None and len(out) > cap:
+    if len(out) > cap:
         out = out[:cap].rstrip() + TRUNCATION_MARKER
     return out
 
@@ -200,13 +195,11 @@ def _tools(graph: AgentGraph | None) -> list[dict[str, Any]]:
 
 
 def _flow_nodes(graph: AgentGraph | None) -> list[dict[str, str]]:
-    if graph is None or not graph.nodes:
+    if graph is None or len(graph.nodes) <= 1:
         return []
     out: list[dict[str, str]] = []
     for node in graph.nodes[:MAX_FLOW_NODES]:
         entry = {"id": node.id, "type": node.type.value}
-        if node.name:
-            entry["name"] = node.name
         if node.prompt.strip():
             entry["excerpt"] = sanitize_text(node.prompt, cap=NODE_EXCERPT_CAP)
         out.append(entry)
@@ -298,55 +291,10 @@ def end_call_phrases(brief: dict[str, Any] | None) -> list[str]:
     return as_str_list(brief.get("end_call_phrases"))
 
 
-def agent_brief_from_graph(
-    graph: AgentGraph,
-    *,
-    purpose: str = "",
-    agent_name: str = "",
-) -> dict[str, Any]:
-    """Prompt-pack alias for ``build_agent_brief`` with display-name fields."""
-    name = (agent_name or graph.name or graph.id).strip()
-    brief = build_agent_brief(graph, purpose=purpose, agent_name=name)
-    if not brief:
-        # Still expose identity so callers can tell a graph was supplied.
-        return {
-            "agent_display_name": name or graph.id,
-            "agent_name": name or graph.id,
-            "stated_purpose": purpose.strip(),
-            "flow_nodes": _flow_nodes(graph),
-        }
-    brief.setdefault("agent_display_name", brief.get("agent_name") or name or graph.id)
-    if purpose.strip():
-        brief.setdefault("stated_purpose", purpose.strip())
-    return brief
-
-
-def agent_brief_from_purpose_only(
-    *,
-    agent_name: str,
-    purpose: str,
-) -> dict[str, Any]:
-    """Minimal brief when no graph IR is available (purpose + name only)."""
-    return {
-        "agent_display_name": (agent_name or "agent").strip() or "agent",
-        "agent_name": (agent_name or "agent").strip() or "agent",
-        "stated_purpose": sanitize_text(purpose, cap=800)
-        or "(purpose not provided — invent realistic domain-agnostic phone scenarios)",
-        "purpose": purpose.strip(),
-        "flow_nodes": [],
-        "note": (
-            "No imported AgentGraph was supplied. "
-            "Ground scenarios in stated_purpose only; do not invent proprietary policies."
-        ),
-    }
-
-
 __all__ = [
     "PROMPT_EXCERPT_CAP",
     "REDACTED",
     "TRUNCATION_MARKER",
-    "agent_brief_from_graph",
-    "agent_brief_from_purpose_only",
     "brief_for_suite",
     "build_agent_brief",
     "end_call_phrases",

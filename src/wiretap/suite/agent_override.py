@@ -20,13 +20,15 @@ def with_agent_override(
     platform: str | None = None,
     token_env: str | None = None,
     transport: str | None = None,
+    phone_number: str | None = None,
     agent_from: str | None = None,
     cwd: Path | None = None,
 ) -> SuiteConfig:
     """Return a deep copy of ``suite`` with agent fields overridden.
 
     ``agent_from`` copies the full agent target from another local suite name/path.
-    Explicit ``agent_id`` / ``platform`` / ``token_env`` / ``transport`` win after that.
+    Explicit ``agent_id`` / ``platform`` / ``token_env`` / ``transport`` /
+    ``phone_number`` win after that.
     """
     out = suite.model_copy(deep=True)
     if agent_from:
@@ -45,6 +47,8 @@ def with_agent_override(
             out.agent.transport = TransportKind(str(transport).strip().lower())
         except ValueError:
             pass
+    if phone_number is not None and str(phone_number).strip():
+        out.agent.phone_number = str(phone_number).strip()
     return out
 
 

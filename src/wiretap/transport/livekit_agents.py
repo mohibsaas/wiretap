@@ -23,16 +23,11 @@ from dataclasses import dataclass, field
 
 from wiretap.models import AgentTarget
 from wiretap.providers.env import require_env
+from wiretap.providers.factory import build_stt
+from wiretap.providers.speech import AudioBuffer
 from wiretap.providers.tts import TTS_SAMPLE_RATE, synthesize_pcm
-from wiretap.transport.audio_util import pad_pcm16_silence
 from wiretap.transport.base import Inbound, Transport
 from wiretap.transport.transcript_util import accept_final_utterance
-from wiretap.transport.turn_gate import (
-    AgentTurnGate,
-    receive_coalesced,
-    speak_with_gate_mute,
-)
-from wiretap.transport.livekit_util import disconnect_livekit_room, schedule_on_loop
 
 
 def mint_livekit_jwt(
@@ -81,17 +76,18 @@ class LiveKitTransport(Transport):
     _tts_name: str = "pyai"
     _stt_name: str = "pyai"
     _voice: str | None = "alloy"
-    _gate: AgentTurnGate | None = None
+    _audio_buf: bytearray = field(default_factory=bytearray)
     _seen: set[str] = field(default_factory=set)
     _draft_agent: str = ""
     _agent_talking: bool = False
+    _last_audio_at: float = 0.0
+    _flush_task: asyncio.Task | None = None
+    _audio_rate: int = 48_000
 
     def configure_speech(self, *, stt: str, tts: str, voice: str | None) -> None:
         self._stt_name = stt or self._stt_name
         self._tts_name = tts or self._tts_name
         self._voice = voice or self._voice
-        if self._gate is not None:
-            self._gate.configure(stt=self._stt_name)
 
     async def connect(self, target: AgentTarget) -> None:
         try:
@@ -126,13 +122,6 @@ class LiveKitTransport(Transport):
         room = rtc.Room()
         self._room = room
 
-        self._gate = AgentTurnGate(
-            stt_name=self._stt_name,
-            on_utterance=self._on_agent_utterance,
-        )
-        self._sync_gate_elapsed()
-        await self._gate.start()
-
         @room.on("data_received")
         def _on_data(data: rtc.DataPacket) -> None:
             self._handle_data(bytes(data.data))
@@ -144,9 +133,13 @@ class LiveKitTransport(Transport):
             _participant: rtc.RemoteParticipant,
         ) -> None:
             if track.kind == rtc.TrackKind.KIND_AUDIO:
-                schedule_on_loop(
-                    self._loop, lambda: self._consume_remote_audio(track)
-                )
+                loop = self._loop
+                if loop and loop.is_running():
+                    loop.call_soon_threadsafe(
+                        lambda: asyncio.ensure_future(
+                            self._consume_remote_audio(track), loop=loop
+                        )
+                    )
 
         try:
             await asyncio.wait_for(room.connect(room_url, token), timeout=30.0)
@@ -158,6 +151,7 @@ class LiveKitTransport(Transport):
         await room.local_participant.publish_track(track)
         self._audio_source = source
         self._connected = True
+        self._flush_task = asyncio.create_task(self._silence_flush_loop())
 
         try:
             inbound = await asyncio.wait_for(self._pending.get(), timeout=12.0)
@@ -171,81 +165,77 @@ class LiveKitTransport(Transport):
             raise RuntimeError("LiveKit transport not connected")
         from livekit import rtc
 
-        pcm_task = asyncio.create_task(
-            synthesize_pcm(
-                text, voice=self._voice or "alloy", provider=self._tts_name
-            )
+        pcm = await synthesize_pcm(
+            text, voice=self._voice or "alloy", provider=self._tts_name
         )
-
-        async def _publish() -> None:
-            assert self._audio_source is not None
-            pcm = await pcm_task
-            if len(pcm) < TTS_SAMPLE_RATE // 5:
-                raise RuntimeError(
-                    "Caller TTS returned empty/too-short audio — "
-                    "check speech.tts provider and voice id"
-                )
-            pcm = pad_pcm16_silence(pcm, sample_rate=TTS_SAMPLE_RATE)
-            self._record(pcm, sample_rate=TTS_SAMPLE_RATE)
-            samples_per_channel = TTS_SAMPLE_RATE // 50
-            offset = 0
-            while offset + samples_per_channel * 2 <= len(pcm):
-                chunk = pcm[offset : offset + samples_per_channel * 2]
-                offset += samples_per_channel * 2
-                frame = rtc.AudioFrame(
-                    data=chunk,
-                    sample_rate=TTS_SAMPLE_RATE,
-                    num_channels=1,
-                    samples_per_channel=samples_per_channel,
-                )
-                await self._audio_source.capture_frame(frame)
-            rem = pcm[offset:]
-            if rem:
-                pad = rem + b"\x00" * (samples_per_channel * 2 - len(rem))
-                frame = rtc.AudioFrame(
-                    data=pad[: samples_per_channel * 2],
-                    sample_rate=TTS_SAMPLE_RATE,
-                    num_channels=1,
-                    samples_per_channel=samples_per_channel,
-                )
-                await self._audio_source.capture_frame(frame)
-
-        await speak_with_gate_mute(self._gate, _publish)
+        self._record(pcm, sample_rate=TTS_SAMPLE_RATE)
+        samples_per_channel = TTS_SAMPLE_RATE // 50
+        offset = 0
+        while offset + samples_per_channel * 2 <= len(pcm):
+            chunk = pcm[offset : offset + samples_per_channel * 2]
+            offset += samples_per_channel * 2
+            frame = rtc.AudioFrame(
+                data=chunk,
+                sample_rate=TTS_SAMPLE_RATE,
+                num_channels=1,
+                samples_per_channel=samples_per_channel,
+            )
+            await self._audio_source.capture_frame(frame)
+        rem = pcm[offset:]
+        if rem:
+            pad = rem + b"\x00" * (samples_per_channel * 2 - len(rem))
+            frame = rtc.AudioFrame(
+                data=pad[: samples_per_channel * 2],
+                sample_rate=TTS_SAMPLE_RATE,
+                num_channels=1,
+                samples_per_channel=samples_per_channel,
+            )
+            await self._audio_source.capture_frame(frame)
 
     async def receive(self) -> Inbound:
-        return await receive_coalesced(
-            self._pending, self._gate, connected=self._connected
-        )
+        try:
+            return await asyncio.wait_for(self._pending.get(), timeout=45.0)
+        except TimeoutError:
+            return Inbound(hung_up=True)
 
     async def hangup(self) -> None:
         self._connected = False
-        self._loop = None
+        if self._flush_task:
+            self._flush_task.cancel()
         if self._draft_agent:
-            try:
-                self._commit_draft()
-            except Exception:
-                pass
-        gate = self._gate
-        self._gate = None
+            self._commit_draft()
+        if self._audio_buf:
+            await self._flush_audio_stt()
         room = self._room
         self._room = None
         self._audio_source = None
-        if gate is not None:
-            try:
-                await asyncio.shield(gate.stop())
-            except Exception:
-                pass
-        await disconnect_livekit_room(room)
+        if room is not None:
+            await room.disconnect()
 
-    async def _on_agent_utterance(
-        self,
-        text: str,
-        start_ms: float | None = None,
-        end_ms: float | None = None,
-    ) -> None:
-        await self._pending.put(
-            Inbound(text=text, start_ms=start_ms, end_ms=end_ms)
+    async def _silence_flush_loop(self) -> None:
+        try:
+            while self._connected:
+                await asyncio.sleep(0.25)
+                if not self._audio_buf or not self._last_audio_at:
+                    continue
+                idle = asyncio.get_running_loop().time() - self._last_audio_at
+                if idle >= 0.6 and len(self._audio_buf) >= 8_000:
+                    await self._flush_audio_stt()
+        except asyncio.CancelledError:
+            raise
+
+    async def _flush_audio_stt(self) -> None:
+        if not self._audio_buf:
+            return
+        pcm = bytes(self._audio_buf)
+        self._audio_buf.clear()
+        stt = build_stt(self._stt_name)
+        text = await stt.transcribe(
+            AudioBuffer(pcm=pcm, sample_rate=self._audio_rate or 48_000)
         )
+        accepted = accept_final_utterance(text, self._seen)
+        if accepted:
+            await self._pending.put(Inbound(text=accepted))
 
     async def _consume_remote_audio(self, track: object) -> None:
         try:
@@ -261,15 +251,17 @@ class LiveKitTransport(Transport):
                     break
                 frame = event.frame
                 pcm = bytes(frame.data)
-                rate = int(frame.sample_rate or 16_000)
-                self._record(pcm, sample_rate=rate)
-                if self._gate is not None:
-                    self._gate.push(pcm, sample_rate=rate)
+                self._record(pcm, sample_rate=frame.sample_rate)
+                self._audio_rate = int(frame.sample_rate or self._audio_rate)
+                self._audio_buf.extend(pcm)
+                self._last_audio_at = asyncio.get_running_loop().time()
+                if len(self._audio_buf) > 480_000:
+                    await self._flush_audio_stt()
         except Exception:
             return
 
     def _handle_data(self, raw: bytes) -> None:
-        """Optional data-channel text (not required for turn-taking)."""
+        """Prefer utterance-final text; Retell-style lists grow interim content."""
         try:
             event = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -330,6 +322,7 @@ class LiveKitTransport(Transport):
         if not text:
             return
         self._draft_agent = text
+        # One-shot complete payloads (not streaming ``update`` growth).
         if isinstance(event.get("agent_response"), str) or et not in {
             "update",
             "",
@@ -344,20 +337,7 @@ class LiveKitTransport(Transport):
             return
         inbound = Inbound(text=text)
         loop = self._loop
-        if loop is None:
-            return
-        try:
-            if loop.is_closed():
-                return
-        except Exception:
-            return
-        if loop.is_running():
-            try:
-                loop.call_soon_threadsafe(self._pending.put_nowait, inbound)
-            except RuntimeError:
-                return
+        if loop and loop.is_running():
+            loop.call_soon_threadsafe(self._pending.put_nowait, inbound)
         else:
-            try:
-                self._pending.put_nowait(inbound)
-            except Exception:
-                return
+            self._pending.put_nowait(inbound)

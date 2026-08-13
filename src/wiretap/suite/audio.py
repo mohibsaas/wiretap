@@ -15,7 +15,6 @@ class CallRecorder:
 
     sample_rate: int = 16_000
     _chunks: list[bytes] = field(default_factory=list)
-    _nbytes: int = field(default=0, init=False, repr=False)
 
     def add(self, pcm: bytes, *, sample_rate: int | None = None) -> None:
         if not pcm:
@@ -28,20 +27,12 @@ class CallRecorder:
             pcm = pcm[:-1]
         if pcm:
             self._chunks.append(pcm)
-            self._nbytes += len(pcm)
 
     def empty(self) -> bool:
-        return self._nbytes == 0
+        return not self._chunks
 
     def pcm(self) -> bytes:
         return b"".join(self._chunks)
-
-    def elapsed_ms(self) -> float:
-        """Milliseconds of audio currently buffered (WAV playhead offset)."""
-        if self._nbytes <= 0 or self.sample_rate <= 0:
-            return 0.0
-        # PCM16 mono: 2 bytes per sample
-        return (self._nbytes / 2.0 / float(self.sample_rate)) * 1000.0
 
     def write_wav(self, path: Path) -> Path | None:
         data = self.pcm()

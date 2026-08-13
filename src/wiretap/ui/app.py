@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 from wiretap import __version__
 from wiretap.paths import wiretap_root
@@ -25,14 +25,7 @@ from wiretap.services.onboard import (
 )
 from wiretap.services.secrets import key_status, load_dotenv, upsert_secrets
 from wiretap.services.simulations import get_simulation_detail, list_simulations
-from wiretap.services.suites import (
-    UpdateSuiteBody,
-    get_suite,
-    list_suites,
-    suite_public_dict,
-    update_suite_cases,
-    validate_suite_name,
-)
+from wiretap.services.suites import get_suite, list_suites, suite_public_dict
 from wiretap.suite.evaluations import evaluation_run_detail, list_evaluation_runs
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -56,6 +49,10 @@ class SecretsBody(BaseModel):
     secrets: dict[str, str]
 
 
+class FromNumberBody(BaseModel):
+    from_number: str
+
+
 class ConnectBody(BaseModel):
     platform: str
     agent_id: str | None = None
@@ -71,18 +68,10 @@ class CallerBody(BaseModel):
     judge_model: str = "gpt-4o-mini"
     stt: str = "pyai"
     tts: str = "pyai"
-    voice: str = ""
+    voice: str = "alloy"
     speech_api_key: str | None = None
     stt_api_key: str | None = None
     tts_api_key: str | None = None
-
-
-class TtsVoicesBody(BaseModel):
-    api_key: str | None = None
-
-
-class LlmModelsBody(BaseModel):
-    api_key: str | None = None
 
 
 class GenerateBody(BaseModel):
@@ -140,6 +129,32 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
         return {"updated": updated, "status": key_status(cwd)}
 
+    @app.get("/api/twilio/phone-numbers")
+    def api_twilio_numbers(limit: int = 20, contains: str | None = None) -> dict[str, Any]:
+        """Caller numbers on the user's Twilio account, plus the saved pick.
+
+        Paged: large accounts hold thousands of numbers, so callers search.
+        """
+        from wiretap.services.twilio_pstn import list_phone_numbers, saved_from_number
+
+        try:
+            numbers = list_phone_numbers(limit=max(1, min(limit, 100)), contains=contains)
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:  # surface Twilio SDK errors as 502, not a 500
+            raise HTTPException(502, f"Twilio lookup failed: {exc}") from exc
+        return {"numbers": numbers, "selected": saved_from_number(cwd)}
+
+    @app.post("/api/twilio/from-number")
+    def api_twilio_from_number(body: FromNumberBody) -> dict[str, Any]:
+        from wiretap.services.twilio_pstn import save_from_number
+
+        try:
+            selected = save_from_number(body.from_number, cwd)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"selected": selected}
+
     @app.get("/api/categories")
     def api_categories() -> list[dict[str, Any]]:
         return list_categories()
@@ -168,38 +183,6 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
         from wiretap.providers.catalog import provider_catalog
 
         return provider_catalog()
-
-    @app.post("/api/providers/tts/{provider}/voices")
-    def api_tts_voices(provider: str, body: TtsVoicesBody | None = None) -> dict[str, Any]:
-        """Live TTS voices when a key is configured or supplied; curated fallback.
-
-        Optional ``api_key`` is used only for this lookup (never logged/returned).
-        """
-        from wiretap.providers.voice_catalog import resolve_tts_voices
-
-        load_dotenv(cwd)
-        key = (body.api_key if body else None) or None
-        return resolve_tts_voices(provider, api_key=key, cwd=cwd)
-
-    @app.post("/api/providers/llm/{provider}/models")
-    def api_llm_models(provider: str, body: LlmModelsBody | None = None) -> dict[str, Any]:
-        """Live LLM models when a key is configured or supplied; curated fallback."""
-        from wiretap.providers.model_catalog import resolve_llm_models
-
-        load_dotenv(cwd)
-        key = (body.api_key if body else None) or None
-        return resolve_llm_models(provider, api_key=key, cwd=cwd)
-
-    @app.post("/api/platforms/{platform}/agents")
-    def api_platform_agents(
-        platform: str, body: LlmModelsBody | None = None
-    ) -> dict[str, Any]:
-        """List remote agents for a platform when an API key is available."""
-        from wiretap.importers.remote_agents import list_remote_agents
-
-        load_dotenv(cwd)
-        key = (body.api_key if body else None) or None
-        return list_remote_agents(platform, api_key=key, cwd=cwd)
 
     @app.post("/api/onboard/connect")
     async def api_connect(body: ConnectBody) -> dict[str, Any]:
@@ -248,27 +231,10 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
     @app.get("/api/suites/{name}")
     def api_get_suite(name: str) -> dict[str, Any]:
         try:
-            stem = validate_suite_name(name)
-            suite = get_suite(stem, cwd)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            suite = get_suite(name, cwd)
         except FileNotFoundError as exc:
             raise HTTPException(404, str(exc)) from exc
-        return suite_public_dict(suite, name=stem)
-
-    @app.put("/api/suites/{name}")
-    def api_update_suite(name: str, body: UpdateSuiteBody) -> dict[str, Any]:
-        """Update editable test-case rows (persona + scenario fields) in suite YAML."""
-        try:
-            stem = validate_suite_name(name)
-            suite = update_suite_cases(stem, body, cwd)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        except FileNotFoundError as exc:
-            raise HTTPException(404, str(exc)) from exc
-        except ValidationError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        return suite_public_dict(suite, name=stem)
+        return suite_public_dict(suite, name=name)
 
     @app.post("/api/batches")
     async def api_start_batch(body: StartBatchBody) -> dict[str, str]:

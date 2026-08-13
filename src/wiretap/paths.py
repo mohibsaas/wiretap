@@ -67,77 +67,6 @@ def suite_path(name: str, cwd: Path | None = None) -> Path:
     return suites_dir(cwd) / f"{stem}.yaml"
 
 
-def list_suite_names(cwd: Path | None = None) -> list[str]:
-    """Sorted suite stems under the suites directory."""
-    d = suites_dir(cwd)
-    if not d.is_dir():
-        return []
-    names = {p.stem for p in d.glob("*.yaml")} | {p.stem for p in d.glob("*.yml")}
-    return sorted(names)
-
-
-def resolve_suite_path(name: str | None = None, cwd: Path | None = None) -> Path:
-    """Resolve a suite for CLI commands with sensible fallbacks.
-
-    Order:
-    1. Explicit name/path that exists
-    2. Onboard ``suite_name`` when asking for the default suite
-    3. The only local suite, if exactly one exists
-    """
-    requested = (name or "default").strip() or "default"
-    path = suite_path(requested, cwd)
-    if path.is_file():
-        return path
-
-    # Explicit filesystem path that is missing — don't invent another suite.
-    raw = Path(requested)
-    explicit = (
-        raw.suffix in {".yaml", ".yml"}
-        or raw.is_absolute()
-        or "/" in requested
-        or requested.startswith(".")
-    )
-    if explicit:
-        raise FileNotFoundError(f"Suite not found: {path}")
-
-    names = list_suite_names(cwd)
-    if requested == "default":
-        preferred = _onboard_suite_name(cwd)
-        if preferred and preferred in names:
-            return suite_path(preferred, cwd)
-        if len(names) == 1:
-            return suite_path(names[0], cwd)
-
-    if not names:
-        raise FileNotFoundError(
-            f"Suite not found: {path}\n"
-            "No suites under ~/.wiretap/suites/ yet.\n"
-            "Create one with: wiretap init   or   wiretap suite generate   "
-            "or   wiretap import"
-        )
-
-    listed = ", ".join(names)
-    raise FileNotFoundError(
-        f"Suite not found: {path}\n"
-        f"Available suites: {listed}\n"
-        f"Run: wiretap simulate --suite {names[0]} --all"
-    )
-
-
-def _onboard_suite_name(cwd: Path | None = None) -> str | None:
-    try:
-        import json
-
-        onboard = wiretap_root(cwd) / "onboard.json"
-        if not onboard.is_file():
-            return None
-        data = json.loads(onboard.read_text(encoding="utf-8"))
-        name = str(data.get("suite_name") or "").strip()
-        return name or None
-    except Exception:
-        return None
-
-
 def simulation_artifact_dirs(cwd: Path | None = None) -> list[Path]:
     """Dirs that may contain simulation jsonl (new + legacy)."""
     root = wiretap_root(cwd)
@@ -162,8 +91,6 @@ __all__ = [
     "ensure_layout",
     "evaluations_dir",
     "graphs_dir",
-    "list_suite_names",
-    "resolve_suite_path",
     "simulation_artifact_dirs",
     "simulations_dir",
     "suite_path",

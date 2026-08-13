@@ -31,23 +31,14 @@ export function OnboardPage() {
   const [llmKey, setLlmKey] = useState("");
   const [simulatorModel, setSimulatorModel] = useState("gpt-4o-mini");
   const [judgeModel, setJudgeModel] = useState("gpt-4o-mini");
-  const [liveModels, setLiveModels] = useState<string[] | null>(null);
-  const [modelSource, setModelSource] = useState<"live" | "curated" | null>(null);
   const [stt, setStt] = useState("pyai");
   const [tts, setTts] = useState("pyai");
   const [voice, setVoice] = useState("alloy");
-  const [liveVoices, setLiveVoices] = useState<
-    { id: string; label: string }[] | null
-  >(null);
-  const [voiceSource, setVoiceSource] = useState<"live" | "curated" | null>(null);
   const [sttKey, setSttKey] = useState("");
   const [ttsKey, setTtsKey] = useState("");
 
   const [platform, setPlatform] = useState("retell");
   const [agentId, setAgentId] = useState("");
-  const [remoteAgents, setRemoteAgents] = useState<
-    { id: string; name: string; label: string }[] | null
-  >(null);
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [roomUrl, setRoomUrl] = useState("");
@@ -102,35 +93,7 @@ export function OnboardPage() {
           );
           setStt(s.caller?.stt || c.defaults.stt);
           setTts(s.caller?.tts || c.defaults.tts);
-          const ttsId = s.caller?.tts || c.defaults.tts;
-          const ttsProv = c.tts.find((p) => p.id === ttsId);
-          setVoice(
-            s.caller?.voice ||
-              ttsProv?.default_voice ||
-              c.defaults.voice ||
-              "alloy",
-          );
-          // Warm live catalogs when keys already exist in .env.
-          void client
-            .llmModels(llm)
-            .then((res) => {
-              setLiveModels(res.models);
-              setModelSource(res.source);
-            })
-            .catch(() => {
-              setLiveModels(null);
-              setModelSource("curated");
-            });
-          void client
-            .ttsVoices(ttsId)
-            .then((res) => {
-              setLiveVoices(res.voices);
-              setVoiceSource(res.source);
-            })
-            .catch(() => {
-              setLiveVoices(null);
-              setVoiceSource("curated");
-            });
+          setVoice(s.caller?.voice || c.defaults.voice);
         })
         .catch((e: Error) => {
           if (!cancelled) setError(e.message);
@@ -166,14 +129,6 @@ export function OnboardPage() {
   const llmInfo = catalog?.llm.find((p) => p.id === llmProvider);
   const sttInfo = catalog?.stt.find((p) => p.id === stt);
   const ttsInfo = catalog?.tts.find((p) => p.id === tts);
-  const modelChoices = liveModels?.length
-    ? liveModels
-    : llmInfo?.models?.length
-      ? llmInfo.models
-      : ([llmInfo?.default_model || "gpt-4o-mini"].filter(Boolean) as string[]);
-  const voiceChoices =
-    liveVoices ??
-    (ttsInfo?.voices?.length ? ttsInfo.voices : []);
 
   const needSttKey = sttInfo && sttInfo.env !== llmInfo?.env;
   const needTtsKey =
@@ -202,76 +157,11 @@ export function OnboardPage() {
 
   function onLlmChange(next: string) {
     setLlmProvider(next);
-    setLiveModels(null);
-    setModelSource(null);
-    const info = catalog?.llm.find((p) => p.id === next);
-    const def = info?.default_model || info?.models?.[0];
+    const def = catalog?.llm.find((p) => p.id === next)?.default_model;
     if (def) {
       setSimulatorModel(def);
       setJudgeModel(def);
     }
-    void refreshModels(next);
-  }
-
-  async function refreshModels(provider: string, keyHint?: string) {
-    try {
-      const res = await client.llmModels(provider, keyHint || llmKey || null);
-      setLiveModels(res.models);
-      setModelSource(res.source);
-      const def = res.default_model;
-      if (def && !res.models.includes(simulatorModel)) {
-        setSimulatorModel(def);
-      }
-      if (def && !res.models.includes(judgeModel)) {
-        setJudgeModel(def);
-      }
-    } catch {
-      setLiveModels(null);
-      setModelSource("curated");
-    }
-  }
-
-  async function refreshVoices(provider: string, keyHint?: string) {
-    try {
-      const res = await client.ttsVoices(provider, keyHint || ttsKey || null);
-      setLiveVoices(res.voices);
-      setVoiceSource(res.source);
-      const stillValid = res.voices.some((v) => v.id === voice);
-      if (!stillValid && res.default_voice) {
-        setVoice(res.default_voice);
-      }
-    } catch {
-      setLiveVoices(null);
-      setVoiceSource("curated");
-    }
-  }
-
-  async function refreshAgents(nextPlatform: string, keyHint?: string) {
-    if (!["retell", "vapi", "elevenlabs"].includes(nextPlatform)) {
-      setRemoteAgents(null);
-      return;
-    }
-    try {
-      const res = await client.platformAgents(nextPlatform, keyHint || apiKey || null);
-      if (res.source === "live" && res.agents.length) {
-        setRemoteAgents(res.agents);
-        if (!agentId) setAgentId(res.agents[0].id);
-      } else {
-        setRemoteAgents(null);
-      }
-    } catch {
-      setRemoteAgents(null);
-    }
-  }
-
-  function onTtsChange(next: string) {
-    setTts(next);
-    setLiveVoices(null);
-    setVoiceSource(null);
-    const info = catalog?.tts.find((p) => p.id === next);
-    const def = info?.default_voice || info?.voices?.[0]?.id || catalog?.defaults.voice;
-    if (def) setVoice(def);
-    void refreshVoices(next);
   }
 
   async function continueToSuite() {
@@ -286,7 +176,7 @@ export function OnboardPage() {
           judge_model: judgeModel.trim() || "gpt-4o-mini",
           stt,
           tts,
-          voice: voice.trim() || ttsInfo?.default_voice || catalog?.defaults.voice || "alloy",
+          voice: voice.trim() || "alloy",
           stt_api_key: needSttKey ? sttKey.trim() || null : null,
           tts_api_key: needTtsKey ? ttsKey.trim() || null : null,
           speech_api_key: null,
@@ -381,13 +271,9 @@ export function OnboardPage() {
                   className="h-9 w-full rounded-md border border-border bg-card px-3"
                   value={platform}
                   onChange={(e) => {
-                    const next = e.target.value;
-                    setPlatform(next);
+                    setPlatform(e.target.value);
                     setApiKey("");
                     setApiSecret("");
-                    setRemoteAgents(null);
-                    setAgentId("");
-                    void refreshAgents(next);
                   }}
                 >
                   <option value="retell">Retell</option>
@@ -425,9 +311,6 @@ export function OnboardPage() {
                         placeholder="API key"
                         value={apiKey}
                         onChange={(e) => setApiKey(e.target.value)}
-                        onBlur={() => {
-                          if (apiKey.trim()) void refreshAgents(platform, apiKey);
-                        }}
                       />
                     </label>
                   ) : (
@@ -454,50 +337,17 @@ export function OnboardPage() {
                         ? "Room name"
                         : platform === "synthflow"
                           ? "Model / assistant ID"
-                          : "Agent"}
+                          : "Agent ID"}
                     </span>
-                    {remoteAgents && remoteAgents.length > 0 ? (
-                      <select
-                        className="h-9 w-full rounded-md border border-border bg-card px-3"
-                        value={
-                          remoteAgents.some((a) => a.id === agentId)
-                            ? agentId
-                            : "__custom__"
-                        }
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (v === "__custom__") {
-                            setAgentId("");
-                            return;
-                          }
-                          setAgentId(v);
-                        }}
-                      >
-                        {remoteAgents.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.name}
-                          </option>
-                        ))}
-                        <option value="__custom__">Paste custom id…</option>
-                      </select>
-                    ) : null}
-                    {(!remoteAgents?.length ||
-                      !remoteAgents.some((a) => a.id === agentId)) && (
-                      <input
-                        className="mt-2 h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
-                        value={agentId}
-                        onChange={(e) => setAgentId(e.target.value)}
-                        placeholder={
-                          platform === "livekit" ? "my-agent-room" : "agent_xxx"
-                        }
-                      />
-                    )}
+                    <input
+                      className="h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
+                      value={agentId}
+                      onChange={(e) => setAgentId(e.target.value)}
+                      placeholder={
+                        platform === "livekit" ? "my-agent-room" : "agent_xxx"
+                      }
+                    />
                   </label>
-                  {showPlatformKey ? (
-                    <p className="text-xs text-muted-foreground">
-                      After entering the API key, blur the field to load agents.
-                    </p>
-                  ) : null}
                   {platform === "bolna" ? (
                     <p className="text-xs text-muted-foreground">
                       Bolna import drafts a suite; live phone dial is not wired yet.
@@ -560,9 +410,6 @@ export function OnboardPage() {
                     }
                     value={llmKey}
                     onChange={(e) => setLlmKey(e.target.value)}
-                    onBlur={() => {
-                      if (llmKey.trim()) void refreshModels(llmProvider, llmKey);
-                    }}
                   />
                 </label>
 
@@ -586,7 +433,7 @@ export function OnboardPage() {
                     <select
                       className="h-9 w-full rounded-md border border-border bg-card px-3"
                       value={tts}
-                      onChange={(e) => onTtsChange(e.target.value)}
+                      onChange={(e) => setTts(e.target.value)}
                     >
                       {(catalog?.tts || [{ id: "pyai", label: "PyAI" }]).map((p) => (
                         <option key={p.id} value={p.id}>
@@ -632,56 +479,18 @@ export function OnboardPage() {
                       }
                       value={ttsKey}
                       onChange={(e) => setTtsKey(e.target.value)}
-                      onBlur={() => {
-                        if (ttsKey.trim()) void refreshVoices(tts, ttsKey);
-                      }}
                     />
                   </label>
                 )}
 
                 <label className="block space-y-1 text-sm">
-                  <span className="text-muted-foreground">
-                    TTS Voice
-                    {voiceSource === "live"
-                      ? " · live catalog"
-                      : voiceSource === "curated"
-                        ? " · curated"
-                        : ""}
-                  </span>
-                  {voiceChoices.length > 0 ? (
-                    <select
-                      className="h-9 w-full rounded-md border border-border bg-card px-3"
-                      value={
-                        voiceChoices.some((v) => v.id === voice)
-                          ? voice
-                          : "__custom__"
-                      }
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (v === "__custom__") {
-                          setVoice("");
-                          return;
-                        }
-                        setVoice(v);
-                      }}
-                    >
-                      {voiceChoices.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.label}
-                        </option>
-                      ))}
-                      <option value="__custom__">Custom voice id…</option>
-                    </select>
-                  ) : null}
-                  {(voiceChoices.length === 0 ||
-                    !voiceChoices.some((v) => v.id === voice)) && (
-                    <input
-                      className="h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
-                      value={voice}
-                      onChange={(e) => setVoice(e.target.value)}
-                      placeholder={ttsInfo?.default_voice || "voice id"}
-                    />
-                  )}
+                  <span className="text-muted-foreground">TTS Voice</span>
+                  <input
+                    className="h-9 w-full rounded-md border border-border bg-card px-3"
+                    value={voice}
+                    onChange={(e) => setVoice(e.target.value)}
+                    placeholder="alloy"
+                  />
                 </label>
 
                 <button
@@ -689,83 +498,25 @@ export function OnboardPage() {
                   className="text-xs text-muted-foreground underline-offset-2 hover:underline"
                   onClick={() => setShowModels((v) => !v)}
                 >
-                  {showModels
-                    ? "Hide models"
-                    : `Test Agent / Judge Models${
-                        modelSource === "live"
-                          ? " · live"
-                          : modelSource === "curated"
-                            ? " · curated"
-                            : ""
-                      }`}
+                  {showModels ? "Hide models" : "Test Agent / Judge Models"}
                 </button>
                 {showModels && (
                   <div className="grid gap-3 sm:grid-cols-2 border-t border-border pt-4">
                     <label className="block space-y-1 text-sm">
                       <span className="text-muted-foreground">Test Agent Model</span>
-                      <select
+                      <input
                         className="h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
-                        value={
-                          modelChoices.includes(simulatorModel)
-                            ? simulatorModel
-                            : "__custom__"
-                        }
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (v === "__custom__") {
-                            setSimulatorModel("");
-                            return;
-                          }
-                          setSimulatorModel(v);
-                        }}
-                      >
-                        {modelChoices.map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
-                        ))}
-                        <option value="__custom__">Custom model…</option>
-                      </select>
-                      {!modelChoices.includes(simulatorModel) && (
-                        <input
-                          className="mt-2 h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
-                          value={simulatorModel}
-                          onChange={(e) => setSimulatorModel(e.target.value)}
-                          placeholder="provider/model"
-                        />
-                      )}
+                        value={simulatorModel}
+                        onChange={(e) => setSimulatorModel(e.target.value)}
+                      />
                     </label>
                     <label className="block space-y-1 text-sm">
                       <span className="text-muted-foreground">Judge Model</span>
-                      <select
+                      <input
                         className="h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
-                        value={
-                          modelChoices.includes(judgeModel) ? judgeModel : "__custom__"
-                        }
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (v === "__custom__") {
-                            setJudgeModel("");
-                            return;
-                          }
-                          setJudgeModel(v);
-                        }}
-                      >
-                        {modelChoices.map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
-                        ))}
-                        <option value="__custom__">Custom model…</option>
-                      </select>
-                      {!modelChoices.includes(judgeModel) && (
-                        <input
-                          className="mt-2 h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
-                          value={judgeModel}
-                          onChange={(e) => setJudgeModel(e.target.value)}
-                          placeholder="provider/model"
-                        />
-                      )}
+                        value={judgeModel}
+                        onChange={(e) => setJudgeModel(e.target.value)}
+                      />
                     </label>
                   </div>
                 )}

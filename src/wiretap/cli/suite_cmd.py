@@ -424,6 +424,7 @@ def _build_new_suite(
     agent_name = name
     room_url = None
     token_env = None
+    phone_number = None
     models_sim = "gpt-4o-mini"
     src = None
 
@@ -438,6 +439,7 @@ def _build_new_suite(
         transport = src.agent.transport.value
         room_url = src.agent.room_url
         token_env = src.agent.token_env
+        phone_number = src.agent.phone_number
         agent_name = str(agent_id or platform or name)
         models_sim = src.models.simulator
 
@@ -468,4 +470,6 @@ def _build_new_suite(
         suite.agent.room_url = room_url
     if token_env:
         suite.agent.token_env = token_env
+    if phone_number:
+        suite.agent.phone_number = phone_number
     return suite
