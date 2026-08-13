@@ -49,7 +49,8 @@ that contradict the brief.
 <rules>
 1. Output MUST be a single JSON array — no markdown fences, no commentary.
 2. Generate exactly the requested count of objects.
-3. Each object MUST use keys: name, identity, goal, say, success, excludes.
+3. Each object MUST use keys: name, identity, goal, say, success, excludes,
+   expected_tools.
 4. name: short human title (≤ 8 words), unique within the batch.
 5. identity: who the caller is (one sentence, third person).
 6. goal: what the caller wants by end of call (observable outcome).
@@ -58,6 +59,12 @@ that contradict the brief.
    words like "good" or "helpful" without a concrete behavior.
 9. excludes: list of banned substrings the live agent must not say (strings).
    Use [] unless the category needs policy red lines (compliance, adversarial).
+9a. expected_tools: names of tools the live agent MUST invoke for this scenario
+    to count as handled. Copy names EXACTLY from agent_brief.tools — never invent
+    one, and never guess at a tool that is not listed there. Use [] when the
+    scenario needs no tool, when the caller is expected to abandon the call, or
+    when no agent_brief is provided. Prefer [] over a speculative guess: a tool
+    listed here is treated as a hard expectation by the judge.
 10. Scenarios in one batch must differ in caller intent, pressure, or edge case —
     not just reword the same plot.
 11. Prefer positive instructions in success ("Agent does X") over vague negatives.
@@ -73,7 +80,8 @@ that contradict the brief.
     "goal": "string",
     "say": "string",
     "success": "string",
-    "excludes": ["string"]
+    "excludes": ["string"],
+    "expected_tools": ["string"]
   }
 ]
 </field_schema>

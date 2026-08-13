@@ -18,12 +18,24 @@ class Inbound:
     hung_up: bool = False
 
 
+@dataclass
+class CallRef:
+    """Identifies the finished call on the platform that hosted it."""
+
+    platform: str
+    call_id: str
+
+
 class Transport(ABC):
     _recorder: CallRecorder | None = None
 
     def attach_recorder(self, recorder: CallRecorder | None) -> None:
         """Optional: capture mixed call PCM for evaluation playback."""
         self._recorder = recorder
+
+    def call_ref(self) -> CallRef | None:
+        """Handle for fetching post-call artifacts. None when unsupported."""
+        return None
 
     def _record(self, pcm: bytes, *, sample_rate: int = 16_000) -> None:
         if self._recorder is not None and pcm:

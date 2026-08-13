@@ -34,6 +34,31 @@ def test_judge_prompt_includes_transcript() -> None:
     assert "<scoring_guide>" in text
 
 
+def test_judge_prompt_includes_tool_evidence_when_captured() -> None:
+    text = judge_call_prompt(
+        success_criteria="Book it",
+        rubric="",
+        transcript="Caller: hi",
+        tool_report="Expected for this scenario: book_appointment",
+    )
+    assert "\n<tool_evidence>" in text
+    assert "<tool_rules>" in text
+    assert "book_appointment" in text
+
+
+def test_judge_prompt_omits_tool_evidence_when_unobservable() -> None:
+    """An empty report must remove the block, not render an empty one — the
+    judge would otherwise fail the agent for a tool we could not observe."""
+    text = judge_call_prompt(
+        success_criteria="Book it",
+        rubric="",
+        transcript="Caller: hi",
+        tool_report="",
+    )
+    assert "\n<tool_evidence>" not in text
+    assert "<tool_rules>" not in text
+
+
 def test_caller_role_and_phase() -> None:
     role = caller_role_message(
         identity="A customer",

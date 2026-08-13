@@ -15,7 +15,7 @@ import httpx
 from wiretap.models import AgentTarget
 from wiretap.providers.env import require_env
 from wiretap.providers.tts import TTS_SAMPLE_RATE, synthesize_pcm
-from wiretap.transport.base import Inbound, Transport
+from wiretap.transport.base import CallRef, Inbound, Transport
 from wiretap.transport.transcript_util import accept_final_utterance
 
 RETELL_API = "https://api.retellai.com"
@@ -39,6 +39,9 @@ class RetellTransport(Transport):
     def configure_speech(self, *, stt: str, tts: str, voice: str | None) -> None:
         self._tts_name = tts or self._tts_name
         self._voice = voice or self._voice
+
+    def call_ref(self) -> CallRef | None:
+        return CallRef(platform="retell", call_id=self._call_id) if self._call_id else None
 
     async def connect(self, target: AgentTarget) -> None:
         try:

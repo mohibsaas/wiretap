@@ -242,6 +242,77 @@ def test_new_suite_grounds_in_the_agent_from_graph(
     assert out.agent.token_env == "RETELL_API_KEY"
 
 
+def test_expected_tools_kept_only_when_the_agent_has_them(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A hallucinated tool name would fail every run against an expectation the
+    agent could never satisfy, so only names from the graph survive."""
+
+    def fake_complete(*, model, messages, temperature=0.4, max_tokens=512):
+        tests = _fake_tests(1, "task")
+        tests[0]["expected_tools"] = ["book_appointment", "refund_card"]
+        return json.dumps(tests)
+
+    monkeypatch.setattr("wiretap.services.generator.complete", fake_complete)
+
+    src = SuiteConfig(
+        agent=AgentTarget(
+            transport=TransportKind.WEBRTC,
+            platform="retell",
+            agent_id="agent_abc",
+            token_env="RETELL_API_KEY",
+        ),
+        personas=[],
+        scenarios=[],
+    )
+    dump_suite(src, tmp_path / ".wiretap" / "suites" / "clinic.yaml")
+
+    graph = AgentGraph(
+        id="agent_abc",
+        name="Clinic bot",
+        entry_node_id="main",
+        nodes=[
+            GraphNode(
+                id="main",
+                type=NodeType.CONVERSATION,
+                name="main",
+                prompt="You are a dental clinic scheduler.",
+            )
+        ],
+        tools=[GraphTool(name="book_appointment", description="Books a slot")],
+    )
+    graphs = tmp_path / ".wiretap" / "graphs"
+    graphs.mkdir(parents=True, exist_ok=True)
+    (graphs / "clinic.graph.json").write_text(graph.model_dump_json(), encoding="utf-8")
+
+    result = runner.invoke(app, ["suite", "generate", "-s", "clinic", "-C", "task", "-n", "1"])
+    assert result.exit_code == 0, result.output
+
+    scenario = load_suite(tmp_path / ".wiretap" / "suites" / "clinic.yaml").scenarios[0]
+    assert scenario.expected_tools == ["book_appointment"]
+
+
+def test_expected_tools_empty_without_a_graph(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With no imported agent there is no tool list to validate against."""
+
+    def fake_complete(*, model, messages, temperature=0.4, max_tokens=512):
+        tests = _fake_tests(1, "task")
+        tests[0]["expected_tools"] = ["book_appointment"]
+        return json.dumps(tests)
+
+    monkeypatch.setattr("wiretap.services.generator.complete", fake_complete)
+
+    result = runner.invoke(
+        app,
+        ["suite", "generate", "-s", "loose", "-C", "task", "-n", "1", "-p", "Booking"],
+    )
+    assert result.exit_code == 0, result.output
+    scenario = load_suite(tmp_path / ".wiretap" / "suites" / "loose.yaml").scenarios[0]
+    assert scenario.expected_tools == []
+
+
 def test_generate_missing_inputs_errors(runner: CliRunner) -> None:
     result = runner.invoke(app, ["suite", "generate", "-s", "orphan", "-C", "task"])
     assert result.exit_code == 1

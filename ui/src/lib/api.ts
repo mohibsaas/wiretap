@@ -38,10 +38,21 @@ export type Simulation = {
   persona_name?: string;
   passed: boolean;
   transcript: { role: string; text: string }[];
+  tool_calls: ToolCall[];
   judge: { passed: boolean; reason: string; suggestions: string[] };
   rules: { passed: boolean; failures: string[] };
+  metrics: Record<string, unknown>;
   meta: Record<string, unknown>;
   audio_path?: string | null;
+};
+
+export type ToolCall = {
+  name: string;
+  arguments: Record<string, unknown>;
+  result_summary: string;
+  status: string;
+  turn_index: number | null;
+  at_seconds: number | null;
 };
 
 export type EvaluationRun = {
