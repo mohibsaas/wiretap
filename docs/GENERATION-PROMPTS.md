@@ -1,5 +1,9 @@
 # Wiretap V1 — Category Generation Prompt Templates
 
+> **Implemented prompts live in code:** [`src/wiretap/prompts/`](../src/wiretap/prompts/).
+> Edit those modules (`suite_generation.py`, `judge.py`, `test_agent.py`, `categories.py`, `defaults.py`) — call sites import from there.
+> This doc is a longer design draft / backlog; it is **not** what the runtime loads today.
+
 **Date:** 2026-08-12 · **Status:** first draft (functional, needs review before wiring)
 **Owns open question S4** (template ownership) — provisionally: these live in-repo under `prompts/generation/`, versioned, `template_version` recorded on every `generation_job`.
 **Feeds:** `TestGenerator` (SUITE-LIFECYCLE §4 stage 3). One call per planned cell (or batched per category).

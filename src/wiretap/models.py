@@ -60,7 +60,7 @@ class AgentTarget(BaseModel):
     """How to reach the live agent under test."""
 
     transport: TransportKind = TransportKind.TEXT
-    platform: str | None = None  # vapi | retell | bland | livekit | None
+    platform: str | None = None  # vapi|retell|elevenlabs|livekit|synthflow|bolna|bland|None
     agent_id: str | None = None
     room_url: str | None = None
     # Never put tokens in YAML — reference env var names only

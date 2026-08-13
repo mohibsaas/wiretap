@@ -40,6 +40,8 @@ export function OnboardPage() {
   const [platform, setPlatform] = useState("retell");
   const [agentId, setAgentId] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [apiSecret, setApiSecret] = useState("");
+  const [roomUrl, setRoomUrl] = useState("");
 
   const [purpose, setPurpose] = useState("");
   const [categories, setCategories] = useState<string[]>([
@@ -94,9 +96,15 @@ export function OnboardPage() {
 
   const categoriesCatalog: Category[] = status?.categories_catalog || [];
   const platformNeedsKey = platform !== "custom";
-  const platformKeyEnv = `${platform.toUpperCase()}_API_KEY`;
+  const platformKeyEnv =
+    platform === "livekit" ? "LIVEKIT_API_KEY" : `${platform.toUpperCase()}_API_KEY`;
   const platformKeyAlreadySet = Boolean(status?.keys?.[platformKeyEnv]);
   const showPlatformKey = platformNeedsKey && !platformKeyAlreadySet;
+  const showLivekitSecret =
+    platform === "livekit" &&
+    !status?.keys?.LIVEKIT_TOKEN &&
+    !status?.keys?.LIVEKIT_API_SECRET;
+  const showRoomUrl = platform === "livekit";
 
   const llmInfo = catalog?.llm.find((p) => p.id === llmProvider);
   const sttInfo = catalog?.stt.find((p) => p.id === stt);
@@ -112,8 +120,20 @@ export function OnboardPage() {
   const canContinue = useMemo(() => {
     if (platform !== "custom" && !agentId.trim()) return false;
     if (showPlatformKey && !apiKey.trim()) return false;
+    if (showLivekitSecret && !apiSecret.trim() && !status?.keys?.LIVEKIT_TOKEN) return false;
+    if (showRoomUrl && !roomUrl.trim()) return false;
     return true;
-  }, [platform, agentId, showPlatformKey, apiKey]);
+  }, [
+    platform,
+    agentId,
+    showPlatformKey,
+    apiKey,
+    showLivekitSecret,
+    apiSecret,
+    status?.keys?.LIVEKIT_TOKEN,
+    showRoomUrl,
+    roomUrl,
+  ]);
 
   function onLlmChange(next: string) {
     setLlmProvider(next);
@@ -147,11 +167,16 @@ export function OnboardPage() {
         platform,
         agent_id: agentId.trim() || null,
         api_key: showPlatformKey && apiKey.trim() ? apiKey.trim() : null,
+        api_secret:
+          platform === "livekit" && apiSecret.trim() ? apiSecret.trim() : null,
+        room_url: showRoomUrl && roomUrl.trim() ? roomUrl.trim() : null,
       });
 
       setLlmKey("");
       setSttKey("");
       setTtsKey("");
+      setApiKey("");
+      setApiSecret("");
       setApiKey("");
       setConnectedName(res.agent_name || res.agent_id || platform);
       setStatus(await client.onboardStatus());
@@ -228,19 +253,36 @@ export function OnboardPage() {
                   onChange={(e) => {
                     setPlatform(e.target.value);
                     setApiKey("");
+                    setApiSecret("");
                   }}
                 >
                   <option value="retell">Retell</option>
                   <option value="vapi">Vapi</option>
+                  <option value="elevenlabs">ElevenLabs Agents</option>
+                  <option value="livekit">LiveKit Agents</option>
+                  <option value="synthflow">Synthflow</option>
+                  <option value="bolna">Bolna (import only)</option>
                   <option value="custom">Custom (text stub)</option>
                 </select>
               </label>
+              {showRoomUrl ? (
+                <label className="block space-y-1 text-sm">
+                  <span className="text-muted-foreground">LiveKit URL (wss://…)</span>
+                  <input
+                    className="h-9 w-full rounded-md border border-border bg-card px-3"
+                    value={roomUrl}
+                    onChange={(e) => setRoomUrl(e.target.value)}
+                    placeholder="wss://your-project.livekit.cloud"
+                    autoComplete="off"
+                  />
+                </label>
+              ) : null}
               {platformNeedsKey ? (
                 <>
                   {showPlatformKey ? (
                     <label className="block space-y-1 text-sm">
                       <span className="text-muted-foreground">
-                        {platform.toUpperCase()} API key
+                        {platformKeyEnv}
                       </span>
                       <input
                         type="password"
@@ -256,15 +298,47 @@ export function OnboardPage() {
                       Using existing {platformKeyEnv} from .env
                     </p>
                   )}
+                  {showLivekitSecret ? (
+                    <label className="block space-y-1 text-sm">
+                      <span className="text-muted-foreground">LIVEKIT_API_SECRET</span>
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        className="h-9 w-full rounded-md border border-border bg-card px-3"
+                        placeholder="API secret"
+                        value={apiSecret}
+                        onChange={(e) => setApiSecret(e.target.value)}
+                      />
+                    </label>
+                  ) : null}
                   <label className="block space-y-1 text-sm">
-                    <span className="text-muted-foreground">Agent ID</span>
+                    <span className="text-muted-foreground">
+                      {platform === "livekit"
+                        ? "Room name"
+                        : platform === "synthflow"
+                          ? "Model / assistant ID"
+                          : "Agent ID"}
+                    </span>
                     <input
                       className="h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
                       value={agentId}
                       onChange={(e) => setAgentId(e.target.value)}
-                      placeholder="agent_xxx"
+                      placeholder={
+                        platform === "livekit" ? "my-agent-room" : "agent_xxx"
+                      }
                     />
                   </label>
+                  {platform === "bolna" ? (
+                    <p className="text-xs text-muted-foreground">
+                      Bolna import drafts a suite; live phone dial is not wired yet.
+                    </p>
+                  ) : null}
+                  {platform === "synthflow" ? (
+                    <p className="text-xs text-muted-foreground">
+                      Live dial also needs SYNTHFLOW_FROM_NUMBER / SYNTHFLOW_TO_NUMBER
+                      in .env.
+                    </p>
+                  ) : null}
                 </>
               ) : (
                 <label className="block space-y-1 text-sm">

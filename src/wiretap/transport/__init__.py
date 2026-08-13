@@ -28,21 +28,35 @@ def build_transport(target: AgentTarget) -> Transport:
             from wiretap.transport.vapi import VapiTransport
 
             return VapiTransport()
-        # Primary: live voice over Vapi WebSocket PCM
         from wiretap.transport.vapi_ws import VapiWebSocketTransport
 
         return VapiWebSocketTransport()
 
     if platform == "retell":
-        # Primary: LiveKit web-call (real voice)
         from wiretap.transport.retell import RetellTransport
 
         return RetellTransport()
 
-    if platform == "bland":
+    if platform == "elevenlabs":
+        from wiretap.transport.elevenlabs import ElevenLabsTransport
+
+        return ElevenLabsTransport()
+
+    if platform == "livekit":
+        from wiretap.transport.livekit_agents import LiveKitTransport
+
+        return LiveKitTransport()
+
+    if platform == "synthflow":
+        from wiretap.transport.synthflow import SynthflowTransport
+
+        return SynthflowTransport()
+
+    if platform in {"bland", "bolna"}:
         raise NotImplementedError(
-            "Bland live phone dial is deferred. "
-            "Use `wiretap import bland` for suite/IR only, then a live Vapi/Retell agent."
+            f"{platform.title()} live phone dial is deferred. "
+            f"Use `wiretap import {platform}` for suite/IR only, "
+            "then a live Vapi/Retell/ElevenLabs/LiveKit/Synthflow agent."
         )
 
     if kind == TransportKind.TEXT:

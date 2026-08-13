@@ -181,9 +181,12 @@ Skipped/pending/running in a results grid are **run states**, not generation cat
 | Platform | Live dial | Notes |
 | --- | --- | --- |
 | Vapi | WebSocket PCM (default) | Text Chat if `transport: text` or `room_url: chat` |
-| Retell | LiveKit | Set `RETELL_API_KEY` |
+| Retell | LiveKit | Set `RETELL_API_KEY` (needs Testing.Write) |
+| ElevenLabs Agents | ConvAI WebSocket | Set `ELEVENLABS_API_KEY` |
+| LiveKit Agents | LiveKit room | `agent_id` = room name, `room_url` = `wss://…`; `LIVEKIT_API_KEY` + `LIVEKIT_API_SECRET` (or `LIVEKIT_TOKEN`) |
+| Synthflow | WS media | `SYNTHFLOW_API_KEY` + `SYNTHFLOW_FROM_NUMBER` / `SYNTHFLOW_TO_NUMBER` |
 | Custom / stub | Text | Local dry-run (`platform: null`) |
-| Bland | Import only | Live phone dial not available yet |
+| Bland / Bolna | Import only | Live phone dial not available yet |
 | Phone / SIP | — | Not available yet |
 
 ---
@@ -194,7 +197,7 @@ Skipped/pending/running in a results grid are **run states**, not generation cat
 src/wiretap/
   agent/         # test agent (beats, orchestrator, simulate)
   suite/         # suite YAML + simulation artifacts
-  transport/     # Vapi / Retell / text
+  transport/     # Vapi / Retell / ElevenLabs / LiveKit / Synthflow / text
   providers/     # LLM + STT/TTS
   eval/          # rules + judge
   importers/     # platform import + AgentGraph

@@ -409,12 +409,10 @@ def build_tts(provider: str, voice: str | None = None) -> TextToSpeechProvider:
             user_id=user,
             voice=voice or "s3://voice-cloning-zero-shot/default",
         )
-    if name in {"azure", "google", "aws_polly"}:
-        raise ValueError(
-            f"TTS provider {provider!r} needs cloud credentials beyond a single API key. "
-            "Use pyai, openai, deepgram, cartesia, elevenlabs, lmnt, rime, or playht for now."
-        )
-    raise ValueError(f"Unknown TTS provider: {provider!r}")
+    raise ValueError(
+        f"Unknown TTS provider: {provider!r}. "
+        "Use pyai, openai, deepgram, cartesia, elevenlabs, lmnt, rime, or playht."
+    )
 
 
 def build_stt(provider: str) -> SpeechToTextProvider:
@@ -440,12 +438,10 @@ def build_stt(provider: str) -> SpeechToTextProvider:
         return GladiaSTT(api_key=require_env("GLADIA_API_KEY"))
     if name == "groq":
         return GroqSTT(api_key=require_env("GROQ_API_KEY"))
-    if name in {"azure", "google", "aws", "soniox", "speechmatics"}:
-        raise ValueError(
-            f"STT provider {provider!r} needs extra cloud setup. "
-            "Use pyai, openai, deepgram, assemblyai, gladia, or groq for now."
-        )
-    raise ValueError(f"Unknown STT provider: {provider!r}")
+    raise ValueError(
+        f"Unknown STT provider: {provider!r}. "
+        "Use pyai, openai, deepgram, assemblyai, gladia, or groq."
+    )
 
 
 __all__ = ["build_stt", "build_tts"]

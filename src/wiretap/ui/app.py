@@ -53,6 +53,8 @@ class ConnectBody(BaseModel):
     platform: str
     agent_id: str | None = None
     api_key: str | None = None
+    api_secret: str | None = None
+    room_url: str | None = None
 
 
 class CallerBody(BaseModel):
@@ -140,6 +142,8 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
                 platform=body.platform,
                 agent_id=body.agent_id,
                 api_key=body.api_key,
+                api_secret=body.api_secret,
+                room_url=body.room_url,
                 cwd=root,
             )
         except ValueError as exc:

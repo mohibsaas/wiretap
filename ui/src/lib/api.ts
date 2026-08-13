@@ -172,6 +172,8 @@ export const client = {
     platform: string;
     agent_id?: string | null;
     api_key?: string | null;
+    api_secret?: string | null;
+    room_url?: string | null;
   }) =>
     api<{
       platform: string;
@@ -179,6 +181,7 @@ export const client = {
       agent_name?: string;
       suite_name?: string;
       imported: boolean;
+      live_deferred?: boolean;
     }>("/api/onboard/connect", {
       method: "POST",
       body: JSON.stringify(body),
