@@ -204,6 +204,15 @@ def register(app: typer.Typer) -> None:
             f"Generated [{ui.ACCENT}]{gen.get('path')}[/{ui.ACCENT}]  "
             f"[bold]{gen.get('scenario_count')}[/bold] scenarios"
         )
-        print_status()
         suite_name = gen.get("suite_name") or result.get("suite_name")
+        try:
+            from wiretap.paths import suite_path
+            from wiretap.suite import load_suite
+
+            sp = suite_path(str(suite_name))
+            if sp.is_file():
+                ui.print_suite_view(load_suite(sp), name=str(suite_name), path=str(sp))
+        except Exception:
+            pass
+        print_status()
         ui.next_cmd(f"wiretap simulate -s {suite_name} --all", hint="Run")

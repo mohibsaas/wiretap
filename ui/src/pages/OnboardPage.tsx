@@ -55,43 +55,63 @@ export function OnboardPage() {
   const [connectedName, setConnectedName] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([client.onboardStatus(), client.providers()])
-      .then(([s, providers]) => {
-        setStatus(s);
-        setCatalog(s.providers || providers);
-        // Adding another agent: only need platform + new agent id — don't reuse prior id.
-        if (addAgentMode) {
-          setPlatform(s.platform || "retell");
-          setAgentId("");
-          setPurpose("");
-        } else {
-          if (s.platform) setPlatform(s.platform);
-          if (s.agent_id) setAgentId(s.agent_id);
-          if (s.purpose) setPurpose(s.purpose);
-          if (s.categories?.length) setCategories(s.categories);
-          if (s.completed || s.platform) {
-            setConnectedName(s.agent_name || s.agent_id || null);
+    let cancelled = false;
+
+    const load = () =>
+      Promise.all([client.onboardStatus(), client.providers()])
+        .then(([s, providers]) => {
+          if (cancelled) return;
+          setStatus(s);
+          setCatalog(s.providers || providers);
+          // Adding another agent: only need platform + new agent id — don't reuse prior id.
+          if (addAgentMode) {
+            setPlatform(s.platform || "retell");
+            setAgentId("");
+            setPurpose("");
+          } else {
+            if (s.platform) setPlatform(s.platform);
+            if (s.agent_id) setAgentId(s.agent_id);
+            if (s.purpose) setPurpose(s.purpose);
+            if (s.categories?.length) setCategories(s.categories);
+            if (s.completed || s.platform) {
+              setConnectedName(s.agent_name || s.agent_id || null);
+            }
+            if (s.platform && !s.completed) setStep(2);
           }
-          if (s.platform && !s.completed) setStep(2);
-        }
-        const c = s.providers || providers;
-        const llm = s.caller?.llm_provider || c.defaults.llm;
-        setLlmProvider(llm);
-        setSimulatorModel(
-          s.caller?.simulator_model ||
-            c.llm.find((p) => p.id === llm)?.default_model ||
-            "gpt-4o-mini",
-        );
-        setJudgeModel(
-          s.caller?.judge_model ||
-            c.llm.find((p) => p.id === llm)?.default_model ||
-            "gpt-4o-mini",
-        );
-        setStt(s.caller?.stt || c.defaults.stt);
-        setTts(s.caller?.tts || c.defaults.tts);
-        setVoice(s.caller?.voice || c.defaults.voice);
-      })
-      .catch((e: Error) => setError(e.message));
+          const c = s.providers || providers;
+          const llm = s.caller?.llm_provider || c.defaults.llm;
+          setLlmProvider(llm);
+          setSimulatorModel(
+            s.caller?.simulator_model ||
+              c.llm.find((p) => p.id === llm)?.default_model ||
+              "gpt-4o-mini",
+          );
+          setJudgeModel(
+            s.caller?.judge_model ||
+              c.llm.find((p) => p.id === llm)?.default_model ||
+              "gpt-4o-mini",
+          );
+          setStt(s.caller?.stt || c.defaults.stt);
+          setTts(s.caller?.tts || c.defaults.tts);
+          setVoice(s.caller?.voice || c.defaults.voice);
+        })
+        .catch((e: Error) => {
+          if (!cancelled) setError(e.message);
+        });
+
+    void load();
+
+    // Re-check keys when returning to the tab (CLI may have written ~/.wiretap/.env).
+    const onFocus = () => {
+      void client.onboardStatus().then((s) => {
+        if (!cancelled) setStatus(s);
+      });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
   }, [addAgentMode]);
 
   const categoriesCatalog: Category[] = status?.categories_catalog || [];

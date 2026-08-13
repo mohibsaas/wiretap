@@ -17,6 +17,7 @@ from wiretap.providers.env import require_env
 from wiretap.providers.factory import build_stt, build_tts
 from wiretap.providers.speech import AudioBuffer
 from wiretap.transport.base import Inbound, Transport
+from wiretap.transport.transcript_util import accept_final_utterance, is_vapi_final_transcript
 
 VAPI_API = "https://api.vapi.ai"
 
@@ -31,6 +32,9 @@ class VapiWebSocketTransport(Transport):
     _voice: str | None = None
     _recv_task: asyncio.Task | None = None
     _audio_buf: bytearray = field(default_factory=bytearray)
+    _seen_agent: set[str] = field(default_factory=set)
+    _last_audio_at: float = 0.0
+    _flush_task: asyncio.Task | None = None
 
     def configure_speech(self, *, stt: str, tts: str, voice: str | None) -> None:
         self._stt_name = stt
@@ -77,6 +81,7 @@ class VapiWebSocketTransport(Transport):
         self._ws = await websockets.connect(ws_url)
         self._connected = True
         self._recv_task = asyncio.create_task(self._reader())
+        self._flush_task = asyncio.create_task(self._silence_flush_loop())
         await self._pending.put(Inbound(text=""))  # ready; may speak first via audio
 
     async def send_text(self, text: str) -> None:
@@ -98,11 +103,39 @@ class VapiWebSocketTransport(Transport):
 
     async def hangup(self) -> None:
         self._connected = False
+        if self._flush_task:
+            self._flush_task.cancel()
         if self._recv_task:
             self._recv_task.cancel()
+        if self._audio_buf:
+            await self._flush_audio_stt()
         if self._ws is not None:
             await self._ws.close()
             self._ws = None
+
+    async def _silence_flush_loop(self) -> None:
+        """STT only after a short pause so chunked audio is one utterance."""
+        try:
+            while self._connected:
+                await asyncio.sleep(0.25)
+                if not self._audio_buf or not self._last_audio_at:
+                    continue
+                idle = asyncio.get_running_loop().time() - self._last_audio_at
+                if idle >= 0.6 and len(self._audio_buf) >= 3200:
+                    await self._flush_audio_stt()
+        except asyncio.CancelledError:
+            raise
+
+    async def _flush_audio_stt(self) -> None:
+        if not self._audio_buf:
+            return
+        pcm = bytes(self._audio_buf)
+        self._audio_buf.clear()
+        stt = build_stt(self._stt_name)
+        text = await stt.transcribe(AudioBuffer(pcm=pcm, sample_rate=16_000))
+        accepted = accept_final_utterance(text, self._seen_agent)
+        if accepted:
+            await self._pending.put(Inbound(text=accepted))
 
     async def _reader(self) -> None:
         assert self._ws is not None
@@ -111,23 +144,24 @@ class VapiWebSocketTransport(Transport):
                 if isinstance(message, bytes):
                     self._record(message, sample_rate=16_000)
                     self._audio_buf.extend(message)
-                    if len(self._audio_buf) > 32_000:
-                        stt = build_stt(self._stt_name)
-                        text = await stt.transcribe(
-                            AudioBuffer(pcm=bytes(self._audio_buf), sample_rate=16_000)
-                        )
-                        self._audio_buf.clear()
-                        if text.strip():
-                            await self._pending.put(Inbound(text=text.strip()))
+                    self._last_audio_at = asyncio.get_running_loop().time()
+                    # Hard cap so we never hold unbounded audio.
+                    if len(self._audio_buf) > 160_000:
+                        await self._flush_audio_stt()
                 elif isinstance(message, str):
                     try:
                         data = json.loads(message)
-                        if data.get("type") == "transcript" and data.get("role") == "assistant":
-                            t = data.get("transcript") or data.get("text")
-                            if t:
-                                await self._pending.put(Inbound(text=str(t)))
                     except json.JSONDecodeError:
-                        pass
+                        continue
+                    if data.get("type") != "transcript" or data.get("role") != "assistant":
+                        continue
+                    # Partials stream like Retell prefixes — only finals are turns.
+                    if not is_vapi_final_transcript(data):
+                        continue
+                    t = data.get("transcript") or data.get("text")
+                    accepted = accept_final_utterance(str(t or ""), self._seen_agent)
+                    if accepted:
+                        await self._pending.put(Inbound(text=accepted))
         except asyncio.CancelledError:
             raise
         except (OSError, ConnectionError, RuntimeError):

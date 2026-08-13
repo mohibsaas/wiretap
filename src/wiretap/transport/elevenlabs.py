@@ -18,6 +18,7 @@ from wiretap.providers.env import require_env
 from wiretap.providers.tts import TTS_SAMPLE_RATE, synthesize_pcm
 from wiretap.transport.base import Inbound, Transport
 from wiretap.transport.audio_util import downsample_pcm16
+from wiretap.transport.transcript_util import accept_final_utterance
 
 ELEVEN_API = "https://api.elevenlabs.io"
 # Match our TTS output to avoid resample when possible
@@ -127,10 +128,29 @@ class ElevenLabsTransport(Transport):
                     continue
                 if typ == "agent_response":
                     evt = data.get("agent_response_event") or {}
-                    text = str(evt.get("agent_response") or "").strip()
-                    if text and text not in self._seen:
-                        self._seen.add(text)
+                    text = accept_final_utterance(
+                        str(evt.get("agent_response") or ""), self._seen
+                    )
+                    if text:
                         await self._pending.put(Inbound(text=text))
+                    continue
+                if typ == "agent_response_correction":
+                    # Barge-in truncated the prior agent line — prefer corrected text.
+                    evt = data.get("agent_response_correction_event") or {}
+                    original = str(evt.get("original_agent_response") or "").strip()
+                    corrected = str(evt.get("corrected_agent_response") or "").strip()
+                    if original and original in self._seen:
+                        self._seen.discard(original)
+                    text = accept_final_utterance(corrected, self._seen)
+                    if text:
+                        await self._pending.put(Inbound(text=text))
+                    continue
+                # Ignore streaming/tentative/chat-part events — not complete turns.
+                if typ in {
+                    "internal_tentative_agent_response",
+                    "agent_chat_response_part",
+                    "tentative_agent_response",
+                }:
                     continue
                 if typ == "audio":
                     evt = data.get("audio_event") or {}

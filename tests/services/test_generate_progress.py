@@ -47,3 +47,10 @@ def test_generate_suite_emits_progress(monkeypatch) -> None:
     assert any(e["kind"] == "category_start" and e["category"] == "task" for e in events)
     assert any(e["kind"] == "category_done" and e["done"] == 3 for e in events)
     assert any(e["kind"] == "category_done" and e["done"] == 6 for e in events)
+    done_events = [e for e in events if e["kind"] == "category_done"]
+    assert done_events[0]["titles"] == ["task-0", "task-1", "task-2"]
+    assert done_events[1]["titles"] == [
+        "compliance-0",
+        "compliance-1",
+        "compliance-2",
+    ]

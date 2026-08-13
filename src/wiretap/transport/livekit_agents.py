@@ -27,6 +27,7 @@ from wiretap.providers.factory import build_stt
 from wiretap.providers.speech import AudioBuffer
 from wiretap.providers.tts import TTS_SAMPLE_RATE, synthesize_pcm
 from wiretap.transport.base import Inbound, Transport
+from wiretap.transport.transcript_util import accept_final_utterance
 
 
 def mint_livekit_jwt(
@@ -77,6 +78,11 @@ class LiveKitTransport(Transport):
     _voice: str | None = "alloy"
     _audio_buf: bytearray = field(default_factory=bytearray)
     _seen: set[str] = field(default_factory=set)
+    _draft_agent: str = ""
+    _agent_talking: bool = False
+    _last_audio_at: float = 0.0
+    _flush_task: asyncio.Task | None = None
+    _audio_rate: int = 48_000
 
     def configure_speech(self, *, stt: str, tts: str, voice: str | None) -> None:
         self._stt_name = stt or self._stt_name
@@ -145,12 +151,14 @@ class LiveKitTransport(Transport):
         await room.local_participant.publish_track(track)
         self._audio_source = source
         self._connected = True
+        self._flush_task = asyncio.create_task(self._silence_flush_loop())
 
         try:
             inbound = await asyncio.wait_for(self._pending.get(), timeout=12.0)
             await self._pending.put(inbound)
         except TimeoutError:
-            pass
+            if self._draft_agent:
+                self._commit_draft()
 
     async def send_text(self, text: str) -> None:
         if not self._connected or self._audio_source is None:
@@ -192,11 +200,42 @@ class LiveKitTransport(Transport):
 
     async def hangup(self) -> None:
         self._connected = False
+        if self._flush_task:
+            self._flush_task.cancel()
+        if self._draft_agent:
+            self._commit_draft()
+        if self._audio_buf:
+            await self._flush_audio_stt()
         room = self._room
         self._room = None
         self._audio_source = None
         if room is not None:
             await room.disconnect()
+
+    async def _silence_flush_loop(self) -> None:
+        try:
+            while self._connected:
+                await asyncio.sleep(0.25)
+                if not self._audio_buf or not self._last_audio_at:
+                    continue
+                idle = asyncio.get_running_loop().time() - self._last_audio_at
+                if idle >= 0.6 and len(self._audio_buf) >= 8_000:
+                    await self._flush_audio_stt()
+        except asyncio.CancelledError:
+            raise
+
+    async def _flush_audio_stt(self) -> None:
+        if not self._audio_buf:
+            return
+        pcm = bytes(self._audio_buf)
+        self._audio_buf.clear()
+        stt = build_stt(self._stt_name)
+        text = await stt.transcribe(
+            AudioBuffer(pcm=pcm, sample_rate=self._audio_rate or 48_000)
+        )
+        accepted = accept_final_utterance(text, self._seen)
+        if accepted:
+            await self._pending.put(Inbound(text=accepted))
 
     async def _consume_remote_audio(self, track: object) -> None:
         try:
@@ -213,50 +252,92 @@ class LiveKitTransport(Transport):
                 frame = event.frame
                 pcm = bytes(frame.data)
                 self._record(pcm, sample_rate=frame.sample_rate)
+                self._audio_rate = int(frame.sample_rate or self._audio_rate)
                 self._audio_buf.extend(pcm)
-                # ~2s at 48k stereo-ish; use byte threshold
-                if len(self._audio_buf) > 96_000:
-                    chunk = bytes(self._audio_buf)
-                    self._audio_buf.clear()
-                    stt = build_stt(self._stt_name)
-                    text = await stt.transcribe(
-                        AudioBuffer(pcm=chunk, sample_rate=frame.sample_rate or 48_000)
-                    )
-                    text = (text or "").strip()
-                    if text and text not in self._seen:
-                        self._seen.add(text)
-                        await self._pending.put(Inbound(text=text))
+                self._last_audio_at = asyncio.get_running_loop().time()
+                if len(self._audio_buf) > 480_000:
+                    await self._flush_audio_stt()
         except Exception:
             return
 
     def _handle_data(self, raw: bytes) -> None:
+        """Prefer utterance-final text; Retell-style lists grow interim content."""
         try:
             event = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             return
-        text = ""
-        if isinstance(event, dict):
-            text = str(
-                event.get("text")
-                or event.get("transcript")
-                or (event.get("agent_response") if isinstance(event.get("agent_response"), str) else "")
-                or ""
-            ).strip()
-            # Retell-style nested transcript list
-            if not text and isinstance(event.get("transcript"), list):
-                for utt in event["transcript"]:
-                    if isinstance(utt, dict) and utt.get("role") in {"agent", "assistant"}:
-                        content = str(utt.get("content") or "").strip()
-                        if content and content not in self._seen:
-                            self._seen.add(content)
-                            loop = self._loop
-                            if loop and loop.is_running():
-                                loop.call_soon_threadsafe(
-                                    self._pending.put_nowait, Inbound(text=content)
-                                )
-                return
-        if text and text not in self._seen:
-            self._seen.add(text)
-            loop = self._loop
-            if loop and loop.is_running():
-                loop.call_soon_threadsafe(self._pending.put_nowait, Inbound(text=text))
+        if not isinstance(event, dict):
+            return
+
+        et = str(event.get("event_type") or "")
+        if et == "agent_start_talking":
+            self._agent_talking = True
+            return
+        if et == "agent_stop_talking":
+            self._agent_talking = False
+            self._commit_draft()
+            return
+
+        # Nested Retell-style transcript list
+        if isinstance(event.get("transcript"), list):
+            latest_agent = ""
+            last_role = ""
+            for utt in event["transcript"]:
+                if not isinstance(utt, dict):
+                    continue
+                role = str(utt.get("role") or "")
+                content = str(utt.get("content") or "").strip()
+                if not content:
+                    continue
+                last_role = role
+                if role in {"agent", "assistant"}:
+                    latest_agent = content
+            if latest_agent:
+                if (
+                    self._draft_agent
+                    and latest_agent != self._draft_agent
+                    and not latest_agent.startswith(self._draft_agent)
+                    and not self._draft_agent.startswith(latest_agent)
+                ):
+                    self._commit_draft()
+                self._draft_agent = latest_agent
+            if last_role == "user" and self._draft_agent:
+                self._commit_draft()
+            return
+
+        text = str(
+            event.get("text")
+            or (
+                event.get("transcript")
+                if isinstance(event.get("transcript"), str)
+                else ""
+            )
+            or (
+                event.get("agent_response")
+                if isinstance(event.get("agent_response"), str)
+                else ""
+            )
+            or ""
+        ).strip()
+        if not text:
+            return
+        self._draft_agent = text
+        # One-shot complete payloads (not streaming ``update`` growth).
+        if isinstance(event.get("agent_response"), str) or et not in {
+            "update",
+            "",
+        }:
+            if not self._agent_talking:
+                self._commit_draft()
+
+    def _commit_draft(self) -> None:
+        text = accept_final_utterance(self._draft_agent, self._seen)
+        self._draft_agent = ""
+        if not text:
+            return
+        inbound = Inbound(text=text)
+        loop = self._loop
+        if loop and loop.is_running():
+            loop.call_soon_threadsafe(self._pending.put_nowait, inbound)
+        else:
+            self._pending.put_nowait(inbound)

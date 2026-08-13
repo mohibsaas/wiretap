@@ -86,12 +86,27 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
     load_dotenv(cwd)
     app = FastAPI(title="wiretap", version=__version__)
 
+    @app.middleware("http")
+    async def _reload_dotenv(request, call_next):  # type: ignore[no-untyped-def]
+        # Re-hydrate os.environ from dotenv on each API call so the UI picks up
+        # keys written by `wiretap init` / CLI after the server started.
+        if request.url.path.startswith("/api/"):
+            load_dotenv(cwd)
+        return await call_next(request)
+
     @app.get("/api/health")
     def health() -> dict[str, Any]:
+        from wiretap.services.secrets import env_file, key_report
+
+        report = key_report(cwd)
         return {
             "version": __version__,
             "cwd": str(cwd) if cwd is not None else str(Path.cwd()),
             "wiretap_root": str(wiretap_root(cwd)),
+            "secrets_file": str(env_file(cwd)),
+            "secrets_file_exists": bool(report.get("wiretap_env_exists")),
+            "project_env": report.get("project_env"),
+            "legacy_env": report.get("legacy_env"),
         }
 
     @app.get("/api/onboard/status")

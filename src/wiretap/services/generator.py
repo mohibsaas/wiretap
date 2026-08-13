@@ -295,7 +295,12 @@ def generate_suite(
                 )
             )
         done += len(tests)
-        _emit("category_done", category=cat, batch=len(tests))
+        _emit(
+            "category_done",
+            category=cat,
+            batch=len(tests),
+            titles=[str(t.get("name") or "").strip() or f"{cat} scenario" for t in tests],
+        )
 
     _emit("done")
 

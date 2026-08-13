@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.progress import (
     BarColumn,
@@ -100,6 +100,7 @@ class ScenarioGenProgress:
     _progress: Progress = field(init=False, repr=False)
     _task_id: int | None = field(default=None, repr=False)
     _finished: list[str] = field(default_factory=list, repr=False)
+    titles: list[tuple[str, str]] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
         self._progress = Progress(
@@ -160,6 +161,13 @@ class ScenarioGenProgress:
         if kind == "category_done":
             if category and category not in self._finished:
                 self._finished.append(category)
+            titles = [str(t).strip() for t in (event.get("titles") or []) if str(t).strip()]
+            for title in titles:
+                self.titles.append((category, title))
+                # Print under the live bar so titles accumulate as a readable list.
+                self._progress.console.print(
+                    f"  [{ACCENT}]•[/{ACCENT}] [{MUTED}]{category}[/{MUTED}]  {title}"
+                )
             label = f"Generated {done}/{total}"
             if category:
                 label += f" · {category} ✓"
@@ -185,6 +193,223 @@ def scenario_progress(total: int) -> Iterator[ScenarioGenProgress]:
     """Context manager yielding a live generation progress callback."""
     with ScenarioGenProgress(total=max(1, total)) as prog:
         yield prog
+
+
+def print_suite_view(
+    suite: Any,
+    *,
+    name: str = "",
+    path: str | None = None,
+    detail: bool = False,
+    scenario: str | None = None,
+) -> None:
+    """Pretty-print a suite: header + scenario table, or detailed cards."""
+    agent = getattr(suite, "agent", None)
+    models = getattr(suite, "models", None)
+    speech = getattr(suite, "speech", None)
+    scenarios = list(getattr(suite, "scenarios", None) or [])
+    personas = {p.id: p for p in (getattr(suite, "personas", None) or [])}
+
+    title = name or getattr(agent, "agent_id", None) or "suite"
+    head = Text()
+    head.append("◈ ", style=f"bold {ACCENT}")
+    head.append(str(title), style=f"bold {ACCENT}")
+    if path:
+        head.append("\n")
+        head.append(str(path), style=MUTED)
+
+    meta = Text()
+    plat = getattr(agent, "platform", None) or "custom"
+    transport = getattr(getattr(agent, "transport", None), "value", None) or getattr(
+        agent, "transport", "—"
+    )
+    agent_id = getattr(agent, "agent_id", None) or "—"
+    meta.append("Platform ", style=MUTED)
+    meta.append(str(plat), style=f"bold {ACCENT}")
+    meta.append("  ·  Agent ", style=MUTED)
+    meta.append(str(agent_id), style=ACCENT)
+    meta.append("  ·  Transport ", style=MUTED)
+    meta.append(str(transport), style=ACCENT)
+
+    console.print(Panel(Group(head, Text(), meta), border_style=ACCENT, padding=(0, 1)))
+
+    detail_meta = Table(show_header=False, box=None, pad_edge=False, padding=(0, 2))
+    detail_meta.add_column(style=MUTED)
+    detail_meta.add_column()
+    if models:
+        detail_meta.add_row(
+            "Models",
+            f"[{ACCENT}]{getattr(models, 'simulator', '—')}[/{ACCENT}] sim  ·  "
+            f"[{ACCENT}]{getattr(models, 'judge', '—')}[/{ACCENT}] judge",
+        )
+    if speech:
+        detail_meta.add_row(
+            "Speech",
+            f"[{ACCENT}]{getattr(speech, 'stt', '—')}[/{ACCENT}] STT  ·  "
+            f"[{ACCENT}]{getattr(speech, 'tts', '—')}[/{ACCENT}] TTS  ·  "
+            f"[{ACCENT}]{getattr(speech, 'voice', '—')}[/{ACCENT}] voice",
+        )
+    detail_meta.add_row("Scenarios", f"[bold]{len(scenarios)}[/bold]")
+    console.print(detail_meta)
+    console.print()
+
+    indexed = list(enumerate(scenarios, start=1))
+    if scenario:
+        selected = _match_scenarios(indexed, scenario)
+        if not selected:
+            err(f"No scenario matched {scenario!r}")
+            muted("Use a number (#), scenario id, or title substring.")
+            return
+        indexed = selected
+
+    if detail or scenario:
+        for i, sc in indexed:
+            print_scenario_detail(
+                sc,
+                index=i,
+                persona=personas.get(getattr(sc, "persona_id", "")),
+            )
+        return
+
+    table = Table(
+        title=Text("Scenarios", style=f"bold {ACCENT}"),
+        show_header=True,
+        header_style=f"bold {ACCENT}",
+        border_style=ACCENT,
+        pad_edge=True,
+        expand=True,
+    )
+    table.add_column("#", style=MUTED, width=4, justify="right")
+    table.add_column("Category", style=ACCENT, min_width=12)
+    table.add_column("Title", style="bold", ratio=2, overflow="fold")
+    table.add_column("Opening", style=MUTED, ratio=2, overflow="fold")
+
+    for i, sc in indexed:
+        opening = ""
+        beats = getattr(sc, "beats", None) or []
+        if beats:
+            opening = str(getattr(beats[0], "say", "") or "").strip()
+        if len(opening) > 72:
+            opening = opening[:69].rstrip() + "…"
+        table.add_row(
+            str(i),
+            str(getattr(sc, "category", None) or "—"),
+            str(getattr(sc, "name", None) or getattr(sc, "id", "")),
+            opening or "—",
+        )
+    console.print(table)
+    muted("Tip: wiretap suite show <name> --detail   or   --detail -t 3")
+
+
+def print_scenario_detail(
+    scenario: Any,
+    *,
+    index: int,
+    persona: Any | None = None,
+) -> None:
+    """Pretty-print one scenario with full eval fields."""
+    title = str(getattr(scenario, "name", None) or getattr(scenario, "id", "") or "scenario")
+    category = str(getattr(scenario, "category", None) or "—")
+    sid = str(getattr(scenario, "id", "") or "")
+
+    head = Text()
+    head.append(f" #{index} ", style=f"bold white on {ACCENT}")
+    head.append(" ")
+    head.append(title, style="bold")
+    head.append(f"  [{category}]", style=MUTED)
+    if sid:
+        head.append(f"\nid  {sid}", style=MUTED)
+
+    rows = Table(show_header=False, box=None, pad_edge=False, padding=(0, 1))
+    rows.add_column(style=MUTED, min_width=14)
+    rows.add_column(overflow="fold")
+
+    if persona is not None:
+        rows.add_row(
+            "Persona",
+            str(getattr(persona, "name", None) or getattr(persona, "id", "") or "—"),
+        )
+        rows.add_row("Identity", str(getattr(persona, "identity", "") or "—"))
+        rows.add_row("Goal", str(getattr(persona, "goal", "") or "—"))
+        personality = str(getattr(persona, "personality", "") or "").strip()
+        if personality:
+            rows.add_row("Personality", personality)
+        constraints = list(getattr(persona, "constraints", None) or [])
+        if constraints:
+            rows.add_row("Constraints", " · ".join(str(c) for c in constraints))
+
+    rows.add_row("Max turns", str(getattr(scenario, "max_turns", "—")))
+    rows.add_row(
+        "Success",
+        str(getattr(scenario, "success_criteria", "") or "—"),
+    )
+    rubric = str(getattr(scenario, "rubric", "") or "").strip()
+    if rubric:
+        rows.add_row("Rubric", rubric)
+
+    rules = getattr(scenario, "rules", None)
+    if rules is not None:
+        excludes = list(getattr(rules, "excludes", None) or [])
+        includes = list(getattr(rules, "includes", None) or [])
+        patterns = list(getattr(rules, "patterns", None) or [])
+        if excludes:
+            rows.add_row("Excludes", " · ".join(str(x) for x in excludes))
+        if includes:
+            rows.add_row("Includes", " · ".join(str(x) for x in includes))
+        if patterns:
+            rows.add_row("Patterns", " · ".join(str(x) for x in patterns))
+
+    beats = list(getattr(scenario, "beats", None) or [])
+    if beats:
+        beat_lines = []
+        for b in beats:
+            at = getattr(b, "at_turn", "?")
+            say = str(getattr(b, "say", "") or "").strip()
+            beat_lines.append(f"turn {at}: {say}")
+        rows.add_row("Beats", "\n".join(beat_lines))
+
+    phases = list(getattr(scenario, "flow_phases", None) or [])
+    if phases:
+        phase_lines = []
+        for p in phases:
+            if isinstance(p, dict):
+                pid = p.get("id") or p.get("name") or "phase"
+                task = p.get("task") or p.get("name") or ""
+                phase_lines.append(f"{pid}: {task}")
+            else:
+                phase_lines.append(str(p))
+        rows.add_row("Phases", "\n".join(phase_lines))
+
+    console.print(Panel(Group(head, Text(), rows), border_style=ACCENT, padding=(0, 1)))
+    console.print()
+
+
+def _match_scenarios(
+    indexed: list[tuple[int, Any]],
+    query: str,
+) -> list[tuple[int, Any]]:
+    """Match by 1-based index, exact id, or case-insensitive title/id substring."""
+    q = (query or "").strip()
+    if not q:
+        return indexed
+    if q.isdigit():
+        n = int(q)
+        return [(i, sc) for i, sc in indexed if i == n]
+    q_lower = q.lower()
+    exact = [
+        (i, sc)
+        for i, sc in indexed
+        if str(getattr(sc, "id", "")).lower() == q_lower
+        or str(getattr(sc, "name", "")).lower() == q_lower
+    ]
+    if exact:
+        return exact
+    return [
+        (i, sc)
+        for i, sc in indexed
+        if q_lower in str(getattr(sc, "id", "")).lower()
+        or q_lower in str(getattr(sc, "name", "")).lower()
+    ]
 
 
 def next_cmd(command: str, *, hint: str = "Next") -> None:
@@ -254,6 +479,8 @@ __all__ = [
     "next_cmd",
     "ok",
     "platform_table",
+    "print_scenario_detail",
+    "print_suite_view",
     "scenario_progress",
     "spinner",
     "status_table",

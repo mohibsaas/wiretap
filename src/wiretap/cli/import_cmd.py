@@ -28,6 +28,7 @@ def _prepare_import(platform: str, *, api_key: str | None, smoke_only: bool) -> 
 
 
 def _save_import(suite_name: str, suite, graph) -> None:
+    from wiretap.cli import style as ui
     from wiretap.paths import ensure_layout, graphs_dir, suite_path
     from wiretap.suite import dump_suite
 
@@ -36,13 +37,9 @@ def _save_import(suite_name: str, suite, graph) -> None:
     dump_suite(suite, path)
     ir_path = graphs_dir() / f"{suite_name}.graph.json"
     ir_path.write_text(graph.model_dump_json(indent=2), encoding="utf-8")
-    print(f"[green]Wrote suite[/green] {path}")
-    print(f"[green]Wrote AgentGraph IR[/green] {ir_path}")
-    by_cat: dict[str, int] = {}
-    for s in suite.scenarios:
-        key = s.category or "untagged"
-        by_cat[key] = by_cat.get(key, 0) + 1
-    print(f"Scenarios: {len(suite.scenarios)} ({by_cat})")
+    ui.ok(f"Wrote suite [{ui.ACCENT}]{path}[/{ui.ACCENT}]")
+    ui.muted(f"AgentGraph IR → {ir_path}")
+    ui.print_suite_view(suite, name=suite_name, path=str(path))
 
 
 def _maybe_generate(

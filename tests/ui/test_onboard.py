@@ -93,6 +93,44 @@ def test_load_dotenv_fills_environ(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert os.environ.get("OPENAI_API_KEY") == "sk-shell"  # shell wins
 
 
+def test_load_dotenv_fills_empty_environ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-filled\n", encoding="utf-8")
+    load_dotenv(tmp_path)
+    assert os.environ.get("OPENAI_API_KEY") == "sk-filled"
+
+
+def test_ui_sees_keys_from_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("RETELL_API_KEY", raising=False)
+    upsert_secrets(
+        {"OPENAI_API_KEY": "sk-ui", "RETELL_API_KEY": "retell-ui"},
+        tmp_path,
+    )
+    # Simulate a process that started before keys existed
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("RETELL_API_KEY", raising=False)
+
+    client = TestClient(create_app(cwd=tmp_path))
+    res = client.get("/api/onboard/status")
+    assert res.status_code == 200
+    keys = res.json()["keys"]
+    assert keys["OPENAI_API_KEY"] is True
+    assert keys["RETELL_API_KEY"] is True
+    # Middleware / status path should rehydrate process env for runtime use
+    assert os.environ.get("OPENAI_API_KEY") == "sk-ui"
+
+    health = client.get("/api/health").json()
+    assert health["secrets_file_exists"] is True
+    assert "secrets_file" in health
+
+
 def test_upsert_secrets_never_echoes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     updated = upsert_secrets({"OPENAI_API_KEY": "sk-test-secret"}, tmp_path)

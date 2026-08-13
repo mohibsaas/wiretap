@@ -38,6 +38,25 @@ def test_key_report_attributes_project_env(
     assert key_status(None)["OPENAI_API_KEY"] is True
 
 
+def test_key_report_reads_legacy_wiretap_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VAPI_API_KEY", raising=False)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("WIRETAP_HOME", str(home / ".wiretap"))
+
+    legacy = tmp_path / ".wiretap"
+    legacy.mkdir()
+    (legacy / ".env").write_text("VAPI_API_KEY=vapi-legacy\n", encoding="utf-8")
+
+    report = key_report(None)
+    assert report["legacy_env"] == str(legacy / ".env")
+    assert report["keys"]["VAPI_API_KEY"]["sources"] == ["legacy"]
+    assert key_status(None)["VAPI_API_KEY"] is True
+
+
 def test_key_report_wiretap_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

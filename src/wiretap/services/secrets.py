@@ -37,42 +37,56 @@ def project_env_file(cwd: Path | None = None) -> Path | None:
     if cwd is not None:
         return None
     local = Path.cwd() / ".env"
-    primary = env_file(None)
+    return _as_extra_env(local, primary=env_file(None))
+
+
+def legacy_env_file(cwd: Path | None = None) -> Path | None:
+    """Pre-global-home store: ``{cwd}/.wiretap/.env`` (read-only migration)."""
+    root = Path.cwd() if cwd is None else Path(cwd)
+    legacy = root / ".wiretap" / ".env"
+    return _as_extra_env(legacy, primary=env_file(cwd))
+
+
+def _as_extra_env(path: Path, *, primary: Path) -> Path | None:
+    if not path.is_file():
+        return None
     try:
-        if local.is_file() and local.resolve() != primary.resolve():
-            return local
+        if path.resolve() == primary.resolve():
+            return None
     except OSError:
-        if local.is_file():
-            return local
-    return None
+        pass
+    return path
 
 
 def _dotenv_candidates(cwd: Path | None = None) -> list[Path]:
-    """Files to load: primary store, then optional project ``./.env``."""
+    """Files to load: primary store, then migration fallbacks."""
     primary = env_file(cwd)
     out = [primary]
-    extra = project_env_file(cwd)
-    if extra is not None:
-        out.append(extra)
+    for extra in (project_env_file(cwd), legacy_env_file(cwd)):
+        if extra is not None and extra not in out:
+            out.append(extra)
     return out
 
 
 def load_dotenv(cwd: Path | None = None) -> None:
-    """Load dotenv into os.environ. Does not override vars already set.
+    """Load dotenv into os.environ.
 
-    Loads the wiretap env file first, then ``./.env`` (if different) so a
-    project-local file can still supply missing keys during migration.
+    Does not override non-empty vars already set in the process environment.
+    Empty / missing vars are filled from files (primary, then project, then legacy).
     """
     for path in _dotenv_candidates(cwd):
         for key, val in _load_dotenv_map(path).items():
-            if key and val and key not in os.environ:
-                os.environ[key] = val
+            if not key or not val:
+                continue
+            if (os.environ.get(key) or "").strip():
+                continue
+            os.environ[key] = val
 
 
 def key_status(cwd: Path | None = None) -> dict[str, bool]:
     """Return which managed keys are set (bool only).
 
-    A key counts as set if present in the wiretap store, project ``./.env``,
+    A key counts as set if present in the wiretap store, project/legacy ``.env``,
     or the process environment.
     """
     report = key_report(cwd)
@@ -85,14 +99,17 @@ def key_report(cwd: Path | None = None) -> dict[str, Any]:
     Sources per key (subset):
     - ``wiretap`` — primary ``~/.wiretap/.env`` (or ``{cwd}/.env`` in tests)
     - ``project`` — cwd ``./.env`` migration fallback
-    - ``environ`` — process env only (not in either file)
+    - ``legacy`` — ``{cwd}/.wiretap/.env`` (pre-global-home layout)
+    - ``environ`` — process env only (not in any file)
     """
     primary = env_file(cwd)
     primary_map = _load_dotenv_map(primary)
     project = project_env_file(cwd)
     project_map = _load_dotenv_map(project) if project is not None else {}
+    legacy = legacy_env_file(cwd)
+    legacy_map = _load_dotenv_map(legacy) if legacy is not None else {}
 
-    # Attribute file sources before load_dotenv mutates os.environ.
+    # Attribute file sources, then ensure process env is hydrated for runtime.
     detail: dict[str, dict[str, Any]] = {}
     for key in managed_secret_keys():
         sources: list[str] = []
@@ -100,6 +117,8 @@ def key_report(cwd: Path | None = None) -> dict[str, Any]:
             sources.append("wiretap")
         if (project_map.get(key) or "").strip():
             sources.append("project")
+        if (legacy_map.get(key) or "").strip():
+            sources.append("legacy")
         in_env = bool((os.environ.get(key) or "").strip())
         if in_env and not sources:
             sources.append("environ")
@@ -111,6 +130,7 @@ def key_report(cwd: Path | None = None) -> dict[str, Any]:
         "wiretap_env": str(primary),
         "wiretap_env_exists": primary.is_file(),
         "project_env": str(project) if project is not None else None,
+        "legacy_env": str(legacy) if legacy is not None else None,
         "keys": detail,
     }
 
@@ -157,6 +177,9 @@ def _load_dotenv_map(path: Path) -> dict[str, str]:
             continue
         k, _, v = s.partition("=")
         k = k.strip()
+        # Support `export KEY=value` and optional quotes.
+        if k.lower().startswith("export "):
+            k = k[7:].strip()
         v = v.strip().strip('"').strip("'")
         if k:
             data[k] = v
@@ -187,6 +210,7 @@ __all__ = [
     "env_file",
     "key_report",
     "key_status",
+    "legacy_env_file",
     "load_dotenv",
     "project_env_file",
     "upsert_secrets",

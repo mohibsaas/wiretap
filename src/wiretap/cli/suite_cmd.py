@@ -27,7 +27,9 @@ def register(app: typer.Typer) -> None:
     @suite_app.command("list")
     def suite_list() -> None:
         """List local suites."""
+        from wiretap.cli import style as ui
         from wiretap.paths import suites_dir
+        from wiretap.suite import load_suite
 
         d = suites_dir()
         if not d.is_dir():
@@ -43,8 +45,30 @@ def register(app: typer.Typer) -> None:
                 "[bold]wiretap suite generate[/bold], or the UI onboarding."
             )
             raise typer.Exit(0)
+
+        table = Table(
+            title="Suites",
+            show_header=True,
+            header_style=f"bold {ui.ACCENT}",
+            border_style=ui.ACCENT,
+            expand=True,
+        )
+        table.add_column("Name", style=f"bold {ui.ACCENT}")
+        table.add_column("Platform", style=ui.MUTED)
+        table.add_column("Agent", overflow="fold")
+        table.add_column("Scenarios", justify="right")
         for f in files:
-            print(f.stem)
+            try:
+                cfg = load_suite(f)
+                table.add_row(
+                    f.stem,
+                    str(cfg.agent.platform or "custom"),
+                    str(cfg.agent.agent_id or "—"),
+                    str(len(cfg.scenarios)),
+                )
+            except Exception:
+                table.add_row(f.stem, "—", "—", "?")
+        ui.console.print(table)
 
     @suite_app.command("path")
     def suite_path_cmd(name: str = typer.Argument("default")) -> None:
@@ -54,18 +78,50 @@ def register(app: typer.Typer) -> None:
         print(suite_path(name))
 
     @suite_app.command("show")
-    def suite_show(name: str = typer.Argument("default")) -> None:
-        """Print suite YAML."""
+    def suite_show(
+        name: str = typer.Argument("default"),
+        detail: bool = typer.Option(
+            False,
+            "--detail",
+            "-d",
+            help="Show full fields for each scenario (persona, goal, success, beats).",
+        ),
+        scenario: str | None = typer.Option(
+            None,
+            "--scenario",
+            "-t",
+            help="Focus one test by #, id, or title substring (implies detail).",
+        ),
+        yaml: bool = typer.Option(
+            False,
+            "--yaml",
+            help="Print raw suite YAML instead of the readable summary.",
+        ),
+    ) -> None:
+        """Show a suite as a readable summary (use --detail / -t for full tests)."""
         from wiretap.cli import style as ui
         from wiretap.paths import suite_path
+        from wiretap.suite import load_suite
 
         with ui.spinner(f"Reading suite {name}…"):
             path = suite_path(name)
             if not path.is_file():
                 print(f"[red]Not found:[/red] {path}")
                 raise typer.Exit(1)
-            text = path.read_text(encoding="utf-8")
-        print(text)
+            if yaml:
+                text = path.read_text(encoding="utf-8")
+            else:
+                cfg = load_suite(path)
+        if yaml:
+            print(text)
+            return
+        ui.print_suite_view(
+            cfg,
+            name=path.stem,
+            path=str(path),
+            detail=detail or bool(scenario),
+            scenario=scenario,
+        )
     @suite_app.command("categories")
     def suite_categories() -> None:
         """List available test categories."""
@@ -232,18 +288,15 @@ def register(app: typer.Typer) -> None:
 
         ensure_layout()
         dump_suite(cfg, path)
-        by_cat: dict[str, int] = {}
-        for s in cfg.scenarios:
-            key = s.category or "untagged"
-            by_cat[key] = by_cat.get(key, 0) + 1
-        print(f"[green]{action}[/green] {path}")
-        print(f"Scenarios: {len(cfg.scenarios)} ({by_cat})")
-        if cfg.agent.platform is None:
-            print(
-                "[dim]Stub agent (text). To dial a live agent later:[/dim]\n"
-                f"  wiretap simulate -s {name} --all --agent-from <imported_suite>"
-            )
+        from wiretap.cli import style as ui
 
+        ui.ok(f"{action} [{ui.ACCENT}]{path}[/{ui.ACCENT}]")
+        ui.print_suite_view(cfg, name=path.stem, path=str(path))
+        if cfg.agent.platform is None:
+            ui.next_cmd(
+                f"wiretap simulate -s {name} --all --agent-from <imported_suite>",
+                hint="Stub agent — dial live later",
+            )
 
 def _prompt_create_inputs() -> tuple[str, str | None]:
     """Ask for purpose and/or imported agent when creating interactively."""

@@ -300,6 +300,7 @@ def print_status(*, cwd: Path | None = None) -> None:
     by_source: dict[str, list[str]] = {
         "wiretap": [],
         "project": [],
+        "legacy": [],
         "environ": [],
     }
     for key, meta in detail.items():
@@ -339,6 +340,16 @@ def print_status(*, cwd: Path | None = None) -> None:
     elif project_env:
         ui.muted(f"Project .env present ({project_env}) — no managed keys in it")
 
+    legacy_env = report.get("legacy_env")
+    if legacy_env and by_source["legacy"]:
+        ui.muted(f"Also in legacy .wiretap/.env ({legacy_env}):")
+        line = Text("  ")
+        for i, k in enumerate(sorted(by_source["legacy"])):
+            if i:
+                line.append(" · ", style=ui.MUTED)
+            line.append(k, style=ui.WARN)
+        ui.console.print(line)
+
     if by_source["environ"]:
         ui.muted("Also in process environment:")
         line = Text("  ")
@@ -350,7 +361,6 @@ def print_status(*, cwd: Path | None = None) -> None:
 
     if not any(by_source.values()):
         ui.warn("No managed API keys found")
-
 
 __all__ = [
     "PLATFORM_API_KEYS",
