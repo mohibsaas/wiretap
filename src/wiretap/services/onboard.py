@@ -25,6 +25,7 @@ from wiretap.providers.catalog import (
     known_provider_ids,
     provider_catalog,
 )
+from wiretap.services.agent_brief import brief_for_suite
 from wiretap.services.generator import generate_suite, list_categories, parse_categories
 from wiretap.services.secrets import key_status, upsert_secrets
 from wiretap.services.suites import get_suite, list_suites
@@ -363,6 +364,7 @@ def generate_onboard_suite(
 
     # If we already imported a suite, reuse its agent target
     agent_kwargs: dict[str, Any] = {}
+    existing: SuiteConfig | None = None
     existing_path = suite_path(name, cwd) if state.get("suite_name") else None
     if existing_path and existing_path.is_file():
         from wiretap.suite import load_suite
@@ -382,26 +384,13 @@ def generate_onboard_suite(
 
     cats = parse_categories(categories)
     model = str(state.get("simulator_model") or "gpt-4o-mini")
-    from wiretap.importers.agent_graph import AgentGraph
-    from wiretap.prompts.agent_brief import (
-        agent_brief_from_graph,
-        agent_brief_from_purpose_only,
+    brief = brief_for_suite(
+        name,
+        suite=existing,
+        purpose=purpose,
+        agent_name=str(agent_name),
+        cwd=cwd,
     )
-
-    agent_brief = agent_brief_from_purpose_only(
-        agent_name=str(agent_name), purpose=purpose
-    )
-    graph_candidate = graphs_dir(cwd) / f"{name}.graph.json"
-    if graph_candidate.is_file():
-        try:
-            agent_brief = agent_brief_from_graph(
-                AgentGraph.model_validate_json(
-                    graph_candidate.read_text(encoding="utf-8")
-                ),
-                purpose=purpose,
-            )
-        except Exception:
-            pass
     suite = generate_suite(
         platform=str(agent_kwargs["platform"]),
         agent_id=agent_kwargs.get("agent_id"),
@@ -411,7 +400,7 @@ def generate_onboard_suite(
         tests_per_category=tests_per_category,
         transport=str(agent_kwargs.get("transport") or "webrtc"),
         model=model,
-        agent_brief=agent_brief,
+        brief=brief,
         on_progress=on_progress,
     )
     # Apply OUR test agent stack from onboarding

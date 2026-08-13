@@ -1,16 +1,13 @@
 """Prompt package imports and builders."""
 
-from wiretap.importers.agent_graph import AgentGraph, GraphEdge, GraphNode, NodeType
 from wiretap.prompts import (
     CATEGORY_CATALOG,
     DEFAULT_CATEGORIES,
     SUITE_GENERATION_SYSTEM,
     TEST_AGENT_MAIN_TASK,
-    agent_brief_from_graph,
-    agent_brief_from_purpose_only,
     caller_role_message,
     judge_call_prompt,
-    sanitize_text,
+    suite_generation_context,
     suite_generation_user_message,
 )
 from wiretap.prompts.test_agent import phase_task_message
@@ -64,43 +61,29 @@ def test_suite_generation_user_message() -> None:
             "agent_name": "booker",
             "purpose": "Book appointments",
             "few_shot_examples": [],
-            "agent_brief": {"agent_display_name": "booker"},
+            "agent_brief": {"agent_name": "booker"},
         },
     )
     assert "exactly 3" in msg
     assert "<agent_brief>" in msg
     assert "booker" in msg
     assert "<role>" in SUITE_GENERATION_SYSTEM
+    # Brief keys the grounding rules reference must be named in the prompt.
+    assert "irreversible_tools" in SUITE_GENERATION_SYSTEM
+    assert "end_call_phrases" in SUITE_GENERATION_SYSTEM
 
 
-def test_agent_brief_sanitizes_secrets() -> None:
-    dirty = "Use api_key: sk-live-abc123 and continue"
-    assert "[REDACTED]" in sanitize_text(dirty)
-    assert "sk-live-abc123" not in sanitize_text(dirty)
-
-    graph = AgentGraph(
-        id="a1",
-        name="Support",
-        entry_node_id="n1",
-        source_platform="vapi",
-        nodes=[
-            GraphNode(
-                id="n1",
-                type=NodeType.CONVERSATION,
-                name="Greet",
-                prompt="Help callers. password: hunter2",
-            )
-        ],
-        edges=[GraphEdge(id="e1", source="n1", target="n1", label="loop")],
+def test_suite_generation_context_without_brief() -> None:
+    """No brief means an empty one, never a partially filled one."""
+    context = suite_generation_context(
+        agent_name="booker",
+        purpose="",
+        category="task",
+        category_label="Task",
+        category_description="Complete tasks",
+        count=2,
+        few_shot_examples=[],
     )
-    brief = agent_brief_from_graph(graph, purpose="Support bot")
-    assert brief["agent_display_name"] == "Support"
-    assert brief["flow_nodes"]
-    blob = str(brief)
-    assert "hunter2" not in blob
-    assert "[REDACTED]" in blob or "password" in blob.lower()
-
-    minimal = agent_brief_from_purpose_only(
-        agent_name="x", purpose="Book demos"
-    )
-    assert minimal["stated_purpose"] == "Book demos"
+    assert context["agent_brief"] == {}
+    assert context["purpose"] == "(none provided)"
+    assert "(not provided" in suite_generation_user_message(2, context)

@@ -15,6 +15,11 @@ _CAT_HELP = (
     "emotional,linguistic,adversarial,operational,factual,compliance,task,other"
 )
 
+_SMOKE_HELP = (
+    "Skip category tests; keep heuristic smoke suite. "
+    "Category generation sends a sanitized brief of the imported agent "
+    "(prompt, tools, flow) to your simulator model."
+)
 _API_KEY_HELP = "Platform API key (saved to .env). Prompted if missing."
 
 
@@ -44,28 +49,28 @@ def _save_import(suite_name: str, suite, graph) -> None:
 
 def _maybe_generate(
     suite,
+    graph,
     *,
     categories: str,
     tests_per_category: int,
     smoke_only: bool,
-    graph=None,
 ) -> None:
     if smoke_only:
         return
-    from wiretap.prompts.agent_brief import (
-        agent_brief_from_graph,
-        agent_brief_from_purpose_only,
-    )
+    from wiretap.cli import style as ui
+    from wiretap.services.agent_brief import build_agent_brief
     from wiretap.services.generator import fill_suite_scenarios, parse_categories
 
     cats = parse_categories(categories)
-    agent_name = str(suite.agent.agent_id or suite.agent.platform or "agent")
-    if graph is not None:
-        brief = agent_brief_from_graph(graph)
-    else:
-        brief = agent_brief_from_purpose_only(agent_name=agent_name, purpose="")
-    from wiretap.cli import style as ui
-
+    agent_name = str(
+        (graph.name if graph else "")
+        or suite.agent.agent_id
+        or suite.agent.platform
+        or "agent"
+    )
+    brief = build_agent_brief(graph, suite=suite, agent_name=agent_name)
+    if brief:
+        print("[dim]Grounding tests in the imported agent config[/dim]")
     with ui.scenario_progress(len(cats) * tests_per_category) as prog:
         fill_suite_scenarios(
             suite,
@@ -73,7 +78,7 @@ def _maybe_generate(
             tests_per_category=tests_per_category,
             agent_name=agent_name,
             model=suite.models.simulator,
-            agent_brief=brief,
+            brief=brief,
             on_progress=prog,
         )
 
@@ -105,9 +110,7 @@ def register(app: typer.Typer) -> None:
             ",".join(DEFAULT_CATEGORIES), "--categories", "-C", help=_CAT_HELP
         ),
         tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
-        smoke_only: bool = typer.Option(
-            False, "--smoke-only", help="Skip category tests; keep heuristic smoke suite."
-        ),
+        smoke_only: bool = typer.Option(False, "--smoke-only", help=_SMOKE_HELP),
     ) -> None:
         """Fetch Retell agent → suite + category tests."""
         from wiretap.importers import import_retell_agent
@@ -116,10 +119,10 @@ def register(app: typer.Typer) -> None:
         suite, graph = _run_import(f"retell {agent_id}", lambda: import_retell_agent(agent_id))
         _maybe_generate(
             suite,
+            graph,
             categories=categories,
             tests_per_category=tests_per_category,
             smoke_only=smoke_only,
-            graph=graph,
         )
         _save_import(name, suite, graph)
         print(f"Next: [bold]wiretap simulate -s {name} --all[/bold]")
@@ -133,9 +136,7 @@ def register(app: typer.Typer) -> None:
             ",".join(DEFAULT_CATEGORIES), "--categories", "-C", help=_CAT_HELP
         ),
         tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
-        smoke_only: bool = typer.Option(
-            False, "--smoke-only", help="Skip category tests; keep heuristic smoke suite."
-        ),
+        smoke_only: bool = typer.Option(False, "--smoke-only", help=_SMOKE_HELP),
     ) -> None:
         """Fetch Vapi assistant → suite + category tests."""
         from wiretap.importers import import_vapi_assistant
@@ -144,10 +145,10 @@ def register(app: typer.Typer) -> None:
         suite, graph = _run_import(f"vapi {assistant_id}", lambda: import_vapi_assistant(assistant_id))
         _maybe_generate(
             suite,
+            graph,
             categories=categories,
             tests_per_category=tests_per_category,
             smoke_only=smoke_only,
-            graph=graph,
         )
         _save_import(name, suite, graph)
         print(f"Next: [bold]wiretap simulate -s {name} --all[/bold]")
@@ -161,9 +162,7 @@ def register(app: typer.Typer) -> None:
             ",".join(DEFAULT_CATEGORIES), "--categories", "-C", help=_CAT_HELP
         ),
         tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
-        smoke_only: bool = typer.Option(
-            False, "--smoke-only", help="Skip category tests; keep heuristic smoke suite."
-        ),
+        smoke_only: bool = typer.Option(False, "--smoke-only", help=_SMOKE_HELP),
     ) -> None:
         """Fetch Bland pathway → suite + category tests."""
         from wiretap.importers import import_bland_pathway
@@ -172,10 +171,10 @@ def register(app: typer.Typer) -> None:
         suite, graph = _run_import(f"bland {pathway_id}", lambda: import_bland_pathway(pathway_id))
         _maybe_generate(
             suite,
+            graph,
             categories=categories,
             tests_per_category=tests_per_category,
             smoke_only=smoke_only,
-            graph=graph,
         )
         _save_import(name, suite, graph)
         print(
@@ -192,9 +191,7 @@ def register(app: typer.Typer) -> None:
             ",".join(DEFAULT_CATEGORIES), "--categories", "-C", help=_CAT_HELP
         ),
         tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
-        smoke_only: bool = typer.Option(
-            False, "--smoke-only", help="Skip category tests; keep heuristic smoke suite."
-        ),
+        smoke_only: bool = typer.Option(False, "--smoke-only", help=_SMOKE_HELP),
     ) -> None:
         """Fetch ElevenLabs Conversational AI agent → suite + category tests."""
         from wiretap.importers import import_elevenlabs_agent
@@ -203,10 +200,10 @@ def register(app: typer.Typer) -> None:
         suite, graph = _run_import(f"elevenlabs {agent_id}", lambda: import_elevenlabs_agent(agent_id))
         _maybe_generate(
             suite,
+            graph,
             categories=categories,
             tests_per_category=tests_per_category,
             smoke_only=smoke_only,
-            graph=graph,
         )
         _save_import(name, suite, graph)
         print(f"Next: [bold]wiretap simulate -s {name} --all[/bold]")
@@ -227,9 +224,7 @@ def register(app: typer.Typer) -> None:
             ",".join(DEFAULT_CATEGORIES), "--categories", "-C", help=_CAT_HELP
         ),
         tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
-        smoke_only: bool = typer.Option(
-            False, "--smoke-only", help="Skip category tests; keep heuristic smoke suite."
-        ),
+        smoke_only: bool = typer.Option(False, "--smoke-only", help=_SMOKE_HELP),
     ) -> None:
         """Build a suite targeting a LiveKit Agents room (no remote HTTP import)."""
         from wiretap.cli.prompts import ensure_caller_configured, ensure_platform_key
@@ -248,10 +243,10 @@ def register(app: typer.Typer) -> None:
         )
         _maybe_generate(
             suite,
+            graph,
             categories=categories,
             tests_per_category=tests_per_category,
             smoke_only=smoke_only,
-            graph=graph,
         )
         _save_import(name, suite, graph)
         print(f"Next: [bold]wiretap simulate -s {name} --all[/bold]")
@@ -265,9 +260,7 @@ def register(app: typer.Typer) -> None:
             ",".join(DEFAULT_CATEGORIES), "--categories", "-C", help=_CAT_HELP
         ),
         tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
-        smoke_only: bool = typer.Option(
-            False, "--smoke-only", help="Skip category tests; keep heuristic smoke suite."
-        ),
+        smoke_only: bool = typer.Option(False, "--smoke-only", help=_SMOKE_HELP),
     ) -> None:
         """Fetch Synthflow assistant → suite + category tests."""
         from wiretap.importers import import_synthflow_agent
@@ -276,10 +269,10 @@ def register(app: typer.Typer) -> None:
         suite, graph = _run_import(f"synthflow {model_id}", lambda: import_synthflow_agent(model_id))
         _maybe_generate(
             suite,
+            graph,
             categories=categories,
             tests_per_category=tests_per_category,
             smoke_only=smoke_only,
-            graph=graph,
         )
         _save_import(name, suite, graph)
         print(
@@ -295,9 +288,7 @@ def register(app: typer.Typer) -> None:
             ",".join(DEFAULT_CATEGORIES), "--categories", "-C", help=_CAT_HELP
         ),
         tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
-        smoke_only: bool = typer.Option(
-            False, "--smoke-only", help="Skip category tests; keep heuristic smoke suite."
-        ),
+        smoke_only: bool = typer.Option(False, "--smoke-only", help=_SMOKE_HELP),
     ) -> None:
         """Fetch Bolna agent → suite + category tests."""
         from wiretap.importers import import_bolna_agent
@@ -306,10 +297,10 @@ def register(app: typer.Typer) -> None:
         suite, graph = _run_import(f"bolna {agent_id}", lambda: import_bolna_agent(agent_id))
         _maybe_generate(
             suite,
+            graph,
             categories=categories,
             tests_per_category=tests_per_category,
             smoke_only=smoke_only,
-            graph=graph,
         )
         _save_import(name, suite, graph)
         print(

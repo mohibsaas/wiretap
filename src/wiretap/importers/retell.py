@@ -6,8 +6,16 @@ from typing import Any
 
 import httpx
 
+from wiretap.importers.agent_graph import (
+    AgentGraph,
+    GraphEdge,
+    GraphNode,
+    GraphTool,
+    NodeType,
+    graph_config,
+    graph_tools,
+)
 from wiretap.importers.suite_builder import suite_from_prompt
-from wiretap.importers.agent_graph import AgentGraph, GraphEdge, GraphNode, NodeType
 from wiretap.models import SuiteConfig
 from wiretap.providers.env import require_env
 
@@ -53,6 +61,23 @@ async def import_retell_agent(agent_id: str) -> tuple[SuiteConfig, AgentGraph]:
         graph=graph,
     )
     return suite, graph
+
+
+def _retell_tools(llm: dict) -> list[GraphTool]:
+    """General tools plus the ones scoped to a single conversation state."""
+    tools = graph_tools(llm.get("general_tools"))
+    seen = {t.name for t in tools}
+    for st in llm.get("states") or []:
+        if not isinstance(st, dict):
+            continue
+        sid = str(st.get("name") or st.get("id") or "")
+        for tool in graph_tools(st.get("tools"), node_id=sid):
+            # A state tool that repeats a general tool adds no new capability.
+            if tool.name in seen:
+                continue
+            seen.add(tool.name)
+            tools.append(tool)
+    return tools
 
 
 def _retell_to_graph(agent_id: str, agent: dict, llm: dict) -> AgentGraph:
@@ -105,6 +130,13 @@ def _retell_to_graph(agent_id: str, agent: dict, llm: dict) -> AgentGraph:
         entry_node_id=entry,
         nodes=nodes,
         edges=edges,
+        tools=_retell_tools(llm),
         source_platform="retell",
         variables=llm.get("default_dynamic_variables") or {},
+        config=graph_config(
+            language=agent.get("language"),
+            voice_id=agent.get("voice_id"),
+            end_call_after_silence_ms=agent.get("end_call_after_silence_ms"),
+            first_message=agent.get("begin_message") or llm.get("begin_message"),
+        ),
     )

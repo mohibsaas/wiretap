@@ -163,7 +163,12 @@ def register(app: typer.Typer) -> None:
 
         New suite: pass --purpose and/or --agent-from.
         Existing suite: regenerates scenarios; keeps the current agent target.
+
+        When the agent was imported, generation is grounded in a sanitized brief
+        of its prompt, tools and flow read from ~/.wiretap/graphs/. Otherwise it
+        falls back to --purpose plus category guidance.
         """
+        from wiretap.cli import style as ui
         from wiretap.cli.prompts import ensure_caller_configured
         from wiretap.importers.suite_builder import slug
         from wiretap.paths import ensure_layout, suite_path
@@ -195,19 +200,20 @@ def register(app: typer.Typer) -> None:
             if agent_from_bit:
                 cfg = _apply_agent_from(cfg, agent_from_bit)
             agent_label = str(cfg.agent.agent_id or cfg.agent.platform or name)
+            # The imported agent config lives beside the suite as graph IR.
+            # --agent-from rebinds the target, so prefer that agent's graph.
+            brief = _agent_brief(
+                cfg,
+                stems=[agent_from_bit, path.stem],
+                purpose=purpose_bit,
+                agent_name=agent_label,
+            )
             print(
                 f"[cyan]Refilling[/cyan] {path.name}  "
                 f"[dim]agent[/dim] {agent_label}  "
                 f"[dim]model[/dim] {cfg.models.simulator}"
+                + ("  [dim]grounded in agent config[/dim]" if brief else "")
             )
-            brief = _load_agent_brief(
-                suite_stem=path.stem,
-                agent_name=agent_label,
-                purpose=purpose_bit,
-                agent_from=agent_from_bit,
-            )
-            from wiretap.cli import style as ui
-
             with ui.scenario_progress(len(cats) * tests_per_category) as prog:
                 fill_suite_scenarios(
                     cfg,
@@ -216,7 +222,7 @@ def register(app: typer.Typer) -> None:
                     purpose=purpose_bit,
                     agent_name=agent_label,
                     model=cfg.models.simulator,
-                    agent_brief=brief,
+                    brief=brief,
                     on_progress=prog,
                 )
             action = "Updated"
@@ -234,8 +240,6 @@ def register(app: typer.Typer) -> None:
                 )
                 _print_agent_table()
                 raise typer.Exit(1)
-
-            from wiretap.cli import style as ui
 
             with ui.scenario_progress(len(cats) * tests_per_category) as prog:
                 cfg = _build_new_suite(
@@ -276,11 +280,11 @@ def register(app: typer.Typer) -> None:
                         purpose=purpose_bit,
                         agent_name=agent_label,
                         model=cfg.models.simulator,
-                        agent_brief=_load_agent_brief(
-                            suite_stem=path.stem,
-                            agent_name=agent_label,
+                        brief=_agent_brief(
+                            cfg,
+                            stems=[agent_from_bit, path.stem],
                             purpose=purpose_bit,
-                            agent_from=agent_from_bit,
+                            agent_name=agent_label,
                         ),
                         on_progress=prog,
                     )
@@ -372,36 +376,33 @@ def _apply_agent_from(cfg, agent_from: str):
     return with_agent_override(cfg, agent_from=agent_from)
 
 
-def _load_agent_brief(
+def _agent_brief(
+    cfg,
     *,
-    suite_stem: str,
-    agent_name: str,
+    stems: list[str | None],
     purpose: str,
-    agent_from: str | None = None,
+    agent_name: str,
 ) -> dict:
-    """Best-effort sanitized brief from AgentGraph IR beside a suite."""
-    from wiretap.importers.agent_graph import AgentGraph
-    from wiretap.paths import graphs_dir, suite_path
-    from wiretap.prompts.agent_brief import (
-        agent_brief_from_graph,
-        agent_brief_from_purpose_only,
-    )
+    """Sanitized brief from the first stem with AgentGraph IR on disk.
 
-    stems = [suite_stem]
-    if agent_from:
-        stems.insert(0, suite_path(agent_from).stem)
+    Stems are tried in order so ``--agent-from`` wins over the suite's own name.
+    Empty dict when none has a graph — generation then falls back to purpose.
+    """
+    from wiretap.paths import suite_path
+    from wiretap.services.agent_brief import brief_for_suite
+
     for stem in stems:
-        graph_path = graphs_dir() / f"{stem}.graph.json"
-        if not graph_path.is_file():
+        if not stem:
             continue
-        try:
-            graph = AgentGraph.model_validate_json(
-                graph_path.read_text(encoding="utf-8")
-            )
-            return agent_brief_from_graph(graph, purpose=purpose)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[yellow]Could not load agent brief ({stem}):[/yellow] {exc}")
-    return agent_brief_from_purpose_only(agent_name=agent_name, purpose=purpose)
+        brief = brief_for_suite(
+            suite_path(stem).stem,
+            suite=cfg,
+            purpose=purpose,
+            agent_name=agent_name,
+        )
+        if brief:
+            return brief
+    return {}
 
 
 def _build_new_suite(
@@ -424,6 +425,7 @@ def _build_new_suite(
     room_url = None
     token_env = None
     models_sim = "gpt-4o-mini"
+    src = None
 
     if agent_from:
         src_path = suite_path(agent_from)
@@ -442,12 +444,14 @@ def _build_new_suite(
     purpose_for_llm = purpose or (
         f"Tests for {agent_name}" if agent_from else ""
     )
-    agent_brief = _load_agent_brief(
-        suite_stem=name,
-        agent_name=agent_name,
+    brief = _agent_brief(
+        src,
+        stems=[agent_from, name],
         purpose=purpose_for_llm,
-        agent_from=agent_from,
+        agent_name=agent_name,
     )
+    if brief:
+        print("[dim]Grounding tests in the imported agent config[/dim]")
     suite = generate_suite(
         platform=platform,
         agent_id=agent_id,
@@ -457,7 +461,7 @@ def _build_new_suite(
         tests_per_category=tests_per_category,
         transport=transport,
         model=models_sim,
-        agent_brief=agent_brief,
+        brief=brief,
         on_progress=on_progress,
     )
     if room_url:

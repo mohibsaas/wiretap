@@ -30,6 +30,22 @@ role, tools/flow nodes, and policies. Do not invent proprietary product facts
 that contradict the brief.
 </context>
 
+<grounding>
+- When agent_brief is present, ground every scenario in it — its stated role,
+  goals, constraints, tools and flow. Task, compliance and factual scenarios
+  must probe what this agent actually does.
+- Never invent tools, policies, prices or capabilities that contradict the
+  brief. If a detail is not in the brief, have the caller ask for it rather
+  than asserting it.
+- agent_brief.irreversible_tools are side effects the caller cannot undo; they
+  are good targets for confirmation and escalation scenarios.
+- Never put any agent_brief.end_call_phrases value, or a farewell, in 'say'.
+  That hangs up the call and scores as an agent failure.
+- Write 'say' in agent_brief.language when one is given.
+- When agent_brief is absent or empty, fall back to purpose plus the category
+  guidance.
+</grounding>
+
 <rules>
 1. Output MUST be a single JSON array — no markdown fences, no commentary.
 2. Generate exactly the requested count of objects.
@@ -75,7 +91,7 @@ def suite_generation_context(
     few_shot_examples: list[dict[str, Any]],
     agent_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    ctx: dict[str, Any] = {
+    context: dict[str, Any] = {
         "agent_name": agent_name,
         "purpose": purpose.strip() or "(none provided)",
         "category": category,
@@ -84,9 +100,10 @@ def suite_generation_context(
         "count": count,
         "few_shot_examples": few_shot_examples,
     }
-    if agent_brief:
-        ctx["agent_brief"] = agent_brief
-    return ctx
+    # Sanitized upstream in services.agent_brief; empty rather than partial so
+    # the model has no half-filled brief to over-read.
+    context["agent_brief"] = agent_brief or {}
+    return context
 
 
 def suite_generation_user_message(count: int, context: dict[str, Any]) -> str:
