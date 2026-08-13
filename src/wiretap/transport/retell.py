@@ -16,6 +16,7 @@ from wiretap.models import AgentTarget
 from wiretap.providers.env import require_env
 from wiretap.providers.tts import TTS_SAMPLE_RATE, synthesize_pcm
 from wiretap.transport.base import Inbound, Transport
+from wiretap.transport.transcript_util import accept_final_utterance
 
 RETELL_API = "https://api.retellai.com"
 RETELL_LIVEKIT_URL = "wss://retell-ai-4ihahnq7.livekit.cloud"
@@ -27,6 +28,8 @@ class RetellTransport(Transport):
     _audio_source: object | None = None
     _pending: asyncio.Queue[Inbound] = field(default_factory=asyncio.Queue)
     _seen_agent: set[str] = field(default_factory=set)
+    _draft_agent: str = ""
+    _agent_talking: bool = False
     _connected: bool = False
     _call_id: str | None = None
     _loop: asyncio.AbstractEventLoop | None = None
@@ -127,9 +130,22 @@ class RetellTransport(Transport):
             # put it back so receive() gets it
             await self._pending.put(inbound)
         except TimeoutError:
-            pass
+            # Some sessions omit stop events; flush any open draft.
+            if self._draft_agent:
+                self._commit_draft()
 
     async def send_text(self, text: str) -> None:
+        # Avoid barging into unfinished agent speech; finalize any open draft.
+        for _ in range(50):  # up to ~5s
+            if not self._agent_talking:
+                if self._draft_agent:
+                    self._commit_draft()
+                break
+            await asyncio.sleep(0.1)
+        else:
+            if self._draft_agent:
+                self._commit_draft()
+
         if not self._connected or self._audio_source is None:
             raise RuntimeError("Retell transport not connected")
         from livekit import rtc
@@ -169,6 +185,8 @@ class RetellTransport(Transport):
 
     async def hangup(self) -> None:
         self._connected = False
+        if self._draft_agent:
+            self._commit_draft()
         room = self._room
         self._room = None
         self._audio_source = None
@@ -195,24 +213,73 @@ class RetellTransport(Transport):
             return
 
     def _handle_data(self, raw: bytes) -> None:
+        """Process Retell LiveKit data-channel events.
+
+        ``update.transcript`` streams *growing* agent utterance text (interim).
+        Committing each update caused fragmented AGENT turns like
+        ``Hi,`` → ``Hi, thanks`` → ``Hi, thanks so much``.
+
+        Keep a draft from ``update``; enqueue only when the agent finishes
+        (``agent_stop_talking``), when the user turn starts, or on hangup.
+        """
         try:
             event = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             return
-        if event.get("event_type") != "update":
+        if not isinstance(event, dict):
             return
+
+        et = str(event.get("event_type") or "")
+        if et == "agent_start_talking":
+            self._agent_talking = True
+            return
+        if et == "agent_stop_talking":
+            self._agent_talking = False
+            self._commit_draft()
+            return
+        if et != "update":
+            return
+
         transcript = event.get("transcript") or []
         if not isinstance(transcript, list):
             return
+
+        latest_agent = ""
+        last_role = ""
         for utt in transcript:
             if not isinstance(utt, dict):
                 continue
-            if utt.get("role") != "agent":
-                continue
+            role = str(utt.get("role") or "")
             content = str(utt.get("content") or "").strip()
-            if not content or content in self._seen_agent:
+            if not content:
                 continue
-            self._seen_agent.add(content)
-            loop = self._loop
-            if loop and loop.is_running():
-                loop.call_soon_threadsafe(self._pending.put_nowait, Inbound(text=content))
+            last_role = role
+            if role == "agent":
+                latest_agent = content
+
+        if latest_agent:
+            # Distinct new utterance while a previous draft was still open.
+            if (
+                self._draft_agent
+                and latest_agent != self._draft_agent
+                and not latest_agent.startswith(self._draft_agent)
+                and not self._draft_agent.startswith(latest_agent)
+            ):
+                self._commit_draft()
+            self._draft_agent = latest_agent
+
+        # User turn in the rolling window ⇒ prior agent utterance is complete.
+        if last_role == "user" and self._draft_agent:
+            self._commit_draft()
+
+    def _commit_draft(self) -> None:
+        text = accept_final_utterance(self._draft_agent, self._seen_agent)
+        self._draft_agent = ""
+        if not text:
+            return
+        inbound = Inbound(text=text)
+        loop = self._loop
+        if loop and loop.is_running():
+            loop.call_soon_threadsafe(self._pending.put_nowait, inbound)
+        else:
+            self._pending.put_nowait(inbound)

@@ -25,7 +25,6 @@ from wiretap.providers.catalog import (
     known_provider_ids,
     provider_catalog,
 )
-from wiretap.services.agent_brief import brief_for_suite
 from wiretap.services.generator import generate_suite, list_categories, parse_categories
 from wiretap.services.secrets import key_status, upsert_secrets
 from wiretap.services.suites import get_suite, list_suites
@@ -65,18 +64,39 @@ def _default_model_for(llm: str, catalog: dict[str, Any]) -> str:
     )
 
 
-def onboard_status(cwd: Path | None = None) -> dict[str, Any]:
+# Keep status fast when the full LiteLLM catalog is not needed.
+_DEFAULT_MODELS_FALLBACK: dict[str, str] = {
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-3-5-sonnet-latest",
+    "gemini": "gemini/gemini-2.0-flash",
+    "groq": "groq/llama-3.3-70b-versatile",
+    "mistral": "mistral/mistral-small-latest",
+}
+
+
+def onboard_status(
+    cwd: Path | None = None,
+    *,
+    include_providers: bool = True,
+) -> dict[str, Any]:
     keys = key_status(cwd)
     suites = list_suites(cwd)
     state = load_onboard_state(cwd)
+    configured = bool(state.get("caller_configured"))
+    # Defaults used only for capability probes / form seeds — not shown as
+    # "configured" values until caller_configured is true.
     llm = (state.get("llm_provider") or "openai").lower()
     if llm == "pyai":
         # Legacy onboard.json mistake — pyai is speech-only
         llm = "openai"
     stt = (state.get("stt") or "pyai").lower()
     tts = (state.get("tts") or "pyai").lower()
-    catalog = provider_catalog()
-    default_model = _default_model_for(llm, catalog)
+    default_model = _DEFAULT_MODELS_FALLBACK.get(llm) or "gpt-4o-mini"
+    if include_providers:
+        catalog = provider_catalog()
+        default_model = _default_model_for(llm, catalog)
+    else:
+        catalog = None
     has_llm = _has_provider_key(keys, llm)
     speech_ok = _has_provider_key(keys, stt) and _has_provider_key(keys, tts)
     has_platform = bool(
@@ -89,9 +109,27 @@ def onboard_status(cwd: Path | None = None) -> dict[str, Any]:
         or keys.get("BLAND_API_KEY")
         or state.get("platform") == "custom"
     )
-    return {
+    if configured:
+        caller = {
+            "llm_provider": llm,
+            "simulator_model": state.get("simulator_model") or default_model,
+            "judge_model": state.get("judge_model") or default_model,
+            "stt": stt,
+            "tts": tts,
+            "voice": state.get("voice") or "alloy",
+        }
+    else:
+        caller = {
+            "llm_provider": None,
+            "simulator_model": None,
+            "judge_model": None,
+            "stt": None,
+            "tts": None,
+            "voice": None,
+        }
+    out: dict[str, Any] = {
         "completed": bool(state.get("completed")),
-        "caller_configured": bool(state.get("caller_configured")),
+        "caller_configured": configured,
         "has_llm_key": has_llm,
         "has_speech_key": speech_ok,
         "has_platform_key": has_platform,
@@ -103,18 +141,13 @@ def onboard_status(cwd: Path | None = None) -> dict[str, Any]:
         "categories": state.get("categories") or [],
         "suite_count": len(suites),
         "keys": keys,
-        "caller": {
-            "llm_provider": llm,
-            "simulator_model": state.get("simulator_model") or default_model,
-            "judge_model": state.get("judge_model") or default_model,
-            "stt": stt,
-            "tts": tts,
-            "voice": state.get("voice") or "alloy",
-        },
-        "providers": catalog,
+        "caller": caller,
         "categories_catalog": list_categories(),
         "needs_onboarding": not bool(state.get("completed")) and len(suites) == 0,
     }
+    if include_providers:
+        out["providers"] = catalog
+    return out
 
 
 def configure_caller(
@@ -320,6 +353,7 @@ def generate_onboard_suite(
     tests_per_category: int = 5,
     suite_name: str | None = None,
     cwd: Path | None = None,
+    on_progress=None,
 ) -> dict[str, Any]:
     state = load_onboard_state(cwd)
     plat = (state.get("platform") or "custom").lower()
@@ -329,7 +363,6 @@ def generate_onboard_suite(
 
     # If we already imported a suite, reuse its agent target
     agent_kwargs: dict[str, Any] = {}
-    existing: SuiteConfig | None = None
     existing_path = suite_path(name, cwd) if state.get("suite_name") else None
     if existing_path and existing_path.is_file():
         from wiretap.suite import load_suite
@@ -349,13 +382,26 @@ def generate_onboard_suite(
 
     cats = parse_categories(categories)
     model = str(state.get("simulator_model") or "gpt-4o-mini")
-    brief = brief_for_suite(
-        name,
-        suite=existing,
-        purpose=purpose,
-        agent_name=str(agent_name),
-        cwd=cwd,
+    from wiretap.importers.agent_graph import AgentGraph
+    from wiretap.prompts.agent_brief import (
+        agent_brief_from_graph,
+        agent_brief_from_purpose_only,
     )
+
+    agent_brief = agent_brief_from_purpose_only(
+        agent_name=str(agent_name), purpose=purpose
+    )
+    graph_candidate = graphs_dir(cwd) / f"{name}.graph.json"
+    if graph_candidate.is_file():
+        try:
+            agent_brief = agent_brief_from_graph(
+                AgentGraph.model_validate_json(
+                    graph_candidate.read_text(encoding="utf-8")
+                ),
+                purpose=purpose,
+            )
+        except Exception:
+            pass
     suite = generate_suite(
         platform=str(agent_kwargs["platform"]),
         agent_id=agent_kwargs.get("agent_id"),
@@ -365,7 +411,8 @@ def generate_onboard_suite(
         tests_per_category=tests_per_category,
         transport=str(agent_kwargs.get("transport") or "webrtc"),
         model=model,
-        brief=brief,
+        agent_brief=agent_brief,
+        on_progress=on_progress,
     )
     # Apply OUR test agent stack from onboarding
     suite.models.simulator = str(state.get("simulator_model") or suite.models.simulator)

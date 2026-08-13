@@ -67,21 +67,32 @@ def register(app: typer.Typer) -> None:
         """
         from wiretap.agent import simulate_scenario
         from wiretap.agent.events import SimEvent
+        from wiretap.cli.prompts import ensure_caller_configured, ensure_platform_key
         from wiretap.cli.sim_display import SimulateDisplay
         from wiretap.paths import suite_path
         from wiretap.suite import load_suite
         from wiretap.suite.agent_override import with_agent_override
         from wiretap.suite.evaluations import save_evaluation_run
 
-        path = suite_path(suite)
-        cfg = load_suite(path)
-        cfg = with_agent_override(
-            cfg,
-            agent_id=agent_id,
-            platform=platform,
-            token_env=token_env,
-            agent_from=agent_from,
-        )
+        # Test agent (LLM/STT/TTS) before dialing
+        ensure_caller_configured()
+
+        from wiretap.cli import style as ui
+
+        with ui.spinner(f"Loading suite {suite}…"):
+            path = suite_path(suite)
+            cfg = load_suite(path)
+            cfg = with_agent_override(
+                cfg,
+                agent_id=agent_id,
+                platform=platform,
+                token_env=token_env,
+                agent_from=agent_from,
+            )
+        # Platform key for live dial (skip for custom/text stub)
+        plat = (cfg.agent.platform or "").lower().strip()
+        if plat:
+            ensure_platform_key(plat)
         if strict:
             cfg.mode.strict = True
             cfg.mode.temperature = 0.2

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, Callable
 
 from wiretap.importers.suite_builder import slug
 from wiretap.models import (
@@ -23,6 +23,7 @@ from wiretap.models import (
     SuiteConfig,
     TransportKind,
 )
+from wiretap.prompts.agent_brief import agent_brief_from_purpose_only
 from wiretap.prompts.categories import (
     CATEGORY_CATALOG,
     DEFAULT_CATEGORIES,
@@ -42,20 +43,8 @@ from wiretap.prompts.suite_generation import (
     suite_generation_user_message,
 )
 from wiretap.providers.llm import complete
-from wiretap.services.agent_brief import end_call_phrases
 
-GENERATION_MAX_TOKENS = 5000
-RETRY_MAX_TOKENS = 3000
-
-# A caller opening with a farewell hangs up the call, which then scores as an
-# agent failure. Rejected at generation time rather than debugged later.
-_FAREWELL_PATTERNS = (
-    r"\bgoodbye\b",
-    r"\bbye\b",
-    r"\bhave a (?:nice|good|great) (?:day|night|one)\b",
-    r"\btalk to you later\b",
-)
-
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 def list_categories() -> list[dict[str, Any]]:
     out = []
@@ -134,14 +123,6 @@ def _extract_json_array(text: str) -> list[Any]:
     return data
 
 
-def _says_stop_word(say: str, banned: list[str]) -> bool:
-    """True when a caller line would end the call instead of starting it."""
-    low = say.lower()
-    if any(phrase.lower() in low for phrase in banned if phrase.strip()):
-        return True
-    return any(re.search(pattern, low) for pattern in _FAREWELL_PATTERNS)
-
-
 def _normalize_test(item: Any, *, category: str, index: int) -> dict[str, Any]:
     if not isinstance(item, dict):
         raise ValueError(f"Test case {index} in {category} is not an object")
@@ -164,23 +145,6 @@ def _normalize_test(item: Any, *, category: str, index: int) -> dict[str, Any]:
     }
 
 
-def _normalize_batch(
-    items: list[Any],
-    *,
-    category: str,
-    banned: list[str],
-    start_index: int = 0,
-) -> list[dict[str, Any]]:
-    """Normalize items, dropping any whose opening line would end the call."""
-    out: list[dict[str, Any]] = []
-    for offset, item in enumerate(items):
-        test = _normalize_test(item, category=category, index=start_index + offset)
-        if _says_stop_word(str(test["say"]), banned):
-            continue
-        out.append(test)
-    return out
-
-
 def llm_generate_category_tests(
     *,
     category: str,
@@ -188,13 +152,16 @@ def llm_generate_category_tests(
     agent_name: str,
     purpose: str = "",
     model: str = "gpt-4o-mini",
-    brief: dict[str, Any] | None = None,
+    agent_brief: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Ask the LLM for ``count`` distinct test cases in one category."""
     meta = CATEGORY_CATALOG[category]
     n = max(1, min(MAX_TESTS_PER_CATEGORY, count))
     examples = meta.get("examples") or []
-    banned = end_call_phrases(brief)
+    brief = agent_brief or agent_brief_from_purpose_only(
+        agent_name=agent_name,
+        purpose=purpose,
+    )
     context = suite_generation_context(
         agent_name=agent_name,
         purpose=purpose,
@@ -215,14 +182,12 @@ def llm_generate_category_tests(
             },
         ],
         temperature=0.7,
-        max_tokens=GENERATION_MAX_TOKENS,
+        max_tokens=3500,
     )
-    out = _normalize_batch(
-        _extract_json_array(content), category=category, banned=banned
-    )
-    if len(out) < n:
+    items = _extract_json_array(content)
+    if len(items) < n:
         # Ask once more for the missing count rather than padding templates.
-        # Items dropped by the stop-word guard are re-requested here too.
+        need = n - len(items)
         extra = complete(
             model=model,
             messages=[
@@ -230,26 +195,21 @@ def llm_generate_category_tests(
                 {
                     "role": "user",
                     "content": suite_generation_retry_user_message(
-                        need=n - len(out),
+                        need=need,
                         category=category,
                         agent_name=agent_name,
-                        existing_names=[str(t["name"]) for t in out],
+                        existing_names=[
+                            str(i.get("name")) for i in items if isinstance(i, dict)
+                        ],
                         context=context,
                     ),
                 },
             ],
             temperature=0.8,
-            max_tokens=RETRY_MAX_TOKENS,
+            max_tokens=2000,
         )
-        out.extend(
-            _normalize_batch(
-                _extract_json_array(extra),
-                category=category,
-                banned=banned,
-                start_index=len(out),
-            )
-        )
-    out = out[:n]
+        items.extend(_extract_json_array(extra))
+    out = [_normalize_test(item, category=category, index=i) for i, item in enumerate(items[:n])]
     if len(out) < n:
         raise ValueError(
             f"LLM returned only {len(out)}/{n} tests for category {category!r}"
@@ -267,30 +227,43 @@ def generate_suite(
     tests_per_category: int = 5,
     transport: str = "webrtc",
     model: str | None = None,
-    brief: dict[str, Any] | None = None,
+    agent_brief: dict[str, Any] | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> SuiteConfig:
-    """Build a SuiteConfig by LLM-generating scenarios for each category."""
+    """Build a SuiteConfig by LLM-generating scenarios for each category.
+
+    ``on_progress`` receives dict events with ``kind`` in
+    ``start | category_start | category_done | done`` plus ``done``/``total``.
+    """
     cats = parse_categories(categories)
     n = max(1, min(MAX_TESTS_PER_CATEGORY, tests_per_category))
     model_name = (model or "gpt-4o-mini").strip() or "gpt-4o-mini"
     personas: list[Persona] = []
     scenarios: list[Scenario] = []
     purpose_bit = purpose.strip()
-    # With a brief the model already grounds in the agent, so stapling the
-    # purpose onto every goal and success criteria is just noise — and the
-    # success suffix would dilute every judge prompt.
-    staple_purpose = bool(purpose_bit) and not brief
     seen_ids: set[str] = set()
     seen_personas: set[str] = set()
+    total = len(cats) * n
+    done = 0
+
+    def _emit(kind: str, **extra: Any) -> None:
+        if on_progress is None:
+            return
+        payload: dict[str, Any] = {"kind": kind, "done": done, "total": total}
+        payload.update(extra)
+        on_progress(payload)
+
+    _emit("start", categories=list(cats))
 
     for cat in cats:
+        _emit("category_start", category=cat, batch=n)
         tests = llm_generate_category_tests(
             category=cat,
             count=n,
             agent_name=agent_name or "the agent",
             purpose=purpose_bit,
             model=model_name,
-            brief=brief,
+            agent_brief=agent_brief,
         )
         for t in tests:
             pid = _unique_slug(_persona_slug(str(t["identity"])), seen_personas)
@@ -300,13 +273,13 @@ def generate_suite(
                     name=str(t["name"]),
                     identity=t["identity"],
                     goal=t["goal"]
-                    + (f" Context: {purpose_bit}" if staple_purpose else ""),
+                    + (f" Context: {purpose_bit}" if purpose_bit else ""),
                     personality=DEFAULT_PERSONA_PERSONALITY,
                     constraints=[DO_NOT_REVEAL_TEST_BOT],
                 )
             )
             success = t["success"]
-            if staple_purpose:
+            if purpose_bit:
                 success = f"{success} Align with purpose: {purpose_bit}"
             scenarios.append(
                 Scenario(
@@ -321,6 +294,15 @@ def generate_suite(
                     category=cat,
                 )
             )
+        done += len(tests)
+        _emit(
+            "category_done",
+            category=cat,
+            batch=len(tests),
+            titles=[str(t.get("name") or "").strip() or f"{cat} scenario" for t in tests],
+        )
+
+    _emit("done")
 
     plat = (platform or "custom").lower().strip()
     try:
@@ -368,7 +350,8 @@ def fill_suite_scenarios(
     purpose: str = "",
     agent_name: str = "agent",
     model: str | None = None,
-    brief: dict[str, Any] | None = None,
+    agent_brief: dict[str, Any] | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> SuiteConfig:
     """Replace personas/scenarios on an existing suite; keep agent / models / speech."""
     generated = generate_suite(
@@ -380,7 +363,8 @@ def fill_suite_scenarios(
         tests_per_category=tests_per_category,
         transport=suite.agent.transport.value,
         model=model or suite.models.simulator,
-        brief=brief,
+        agent_brief=agent_brief,
+        on_progress=on_progress,
     )
     suite.personas = generated.personas
     suite.scenarios = generated.scenarios
@@ -391,6 +375,7 @@ __all__ = [
     "CATEGORY_CATALOG",
     "DEFAULT_CATEGORIES",
     "MAX_TESTS_PER_CATEGORY",
+    "ProgressCallback",
     "fill_suite_scenarios",
     "generate_suite",
     "list_categories",
