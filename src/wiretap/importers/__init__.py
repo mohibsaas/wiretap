@@ -1,6 +1,14 @@
 """Platform importers → SuiteConfig + AgentGraph IR."""
 
-from wiretap.importers.agent_graph import AgentGraph, GraphEdge, GraphNode, NodeType
+from wiretap.importers.agent_graph import (
+    AgentGraph,
+    GraphEdge,
+    GraphNode,
+    GraphTool,
+    NodeType,
+    graph_tool,
+    graph_tools,
+)
 from wiretap.importers.bland import import_bland_pathway
 from wiretap.importers.bolna import import_bolna_agent
 from wiretap.importers.elevenlabs import import_elevenlabs_agent
@@ -13,7 +21,10 @@ __all__ = [
     "AgentGraph",
     "GraphEdge",
     "GraphNode",
+    "GraphTool",
     "NodeType",
+    "graph_tool",
+    "graph_tools",
     "import_bland_pathway",
     "import_bolna_agent",
     "import_elevenlabs_agent",

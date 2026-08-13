@@ -347,6 +347,10 @@ def print_scenario_detail(
     if rubric:
         rows.add_row("Rubric", rubric)
 
+    expected_tools = list(getattr(scenario, "expected_tools", None) or [])
+    if expected_tools:
+        rows.add_row("Expected tools", " · ".join(str(t) for t in expected_tools))
+
     rules = getattr(scenario, "rules", None)
     if rules is not None:
         excludes = list(getattr(rules, "excludes", None) or [])
@@ -410,6 +414,29 @@ def _match_scenarios(
         if q_lower in str(getattr(sc, "id", "")).lower()
         or q_lower in str(getattr(sc, "name", "")).lower()
     ]
+
+
+def tool_summary(artifact: Any) -> str:
+    """One-line tool verdict for a simulation, or '' when there is nothing to say.
+
+    Distinguishes "called nothing" from "could not observe" — reading an
+    unobservable capture as a tool failure is the trap this line exists to avoid.
+    """
+    meta = getattr(artifact, "meta", None) or {}
+    metrics = getattr(artifact, "metrics", None) or {}
+    capture = str(meta.get("tool_capture") or "")
+    if capture and capture != "ok":
+        expected = metrics.get("missing_tools") or []
+        # Only worth saying when the scenario actually expected something.
+        return "tools: not observable for this agent" if expected else ""
+    if capture != "ok":
+        return ""
+    called = int(metrics.get("tool_calls") or 0)
+    missing = [str(t) for t in (metrics.get("missing_tools") or [])]
+    parts = [f"{called} called"]
+    if missing:
+        parts.append(f"never called: {', '.join(missing)}")
+    return "tools: " + " · ".join(parts)
 
 
 def next_cmd(command: str, *, hint: str = "Next") -> None:
@@ -485,6 +512,7 @@ __all__ = [
     "spinner",
     "status_table",
     "step",
+    "tool_summary",
     "warn",
     "ScenarioGenProgress",
 ]

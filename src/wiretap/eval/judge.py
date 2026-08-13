@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from wiretap.eval.tools import tool_report_text
 from wiretap.eval.transcript import transcript_text
-from wiretap.models import JudgeResult, TurnRecord
+from wiretap.models import JudgeResult, ToolCallRecord, TurnRecord
 from wiretap.prompts.judge import judge_call_prompt
 from wiretap.providers.llm import complete
 
@@ -17,11 +18,19 @@ def judge_call(
     turns: list[TurnRecord],
     success_criteria: str,
     rubric: str,
+    expected_tools: list[str] | None = None,
+    tool_calls: list[ToolCallRecord] | None = None,
+    tool_capture: str = "unsupported",
 ) -> JudgeResult:
     prompt = judge_call_prompt(
         success_criteria=success_criteria,
         rubric=rubric,
         transcript=transcript_text(turns),
+        tool_report=tool_report_text(
+            expected=expected_tools or [],
+            actual=tool_calls or [],
+            capture=tool_capture,
+        ),
     )
     raw = complete(
         model=model,

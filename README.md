@@ -87,9 +87,21 @@ wiretap import retell --agent-id agent_xxx
 
 ### Known platforms (Vapi / Retell)
 
-Import pulls the live agent config, then **generates category-tagged tests via LLM**
-(defaults: `emotional`, `compliance`, `task` — 3 tests each). Uses your configured
-simulator model (LiteLLM). Regenerate anytime with `wiretap suite generate`.
+Import pulls the live agent config — prompt, flow, variables and **tools** — then
+**generates category-tagged tests via LLM** (defaults: `emotional`, `compliance`,
+`task` — 3 tests each). Uses your configured simulator model (LiteLLM).
+Regenerate anytime with `wiretap suite generate`.
+
+Only tool names, descriptions and argument names are captured. Webhook URLs and
+tool auth headers are dropped at import, so they never reach `~/.wiretap/graphs/`
+or the generation prompt.
+
+Generation is **grounded in the imported agent**: its role, goals, stated constraints,
+tools and flow nodes are summarized into an agent brief and sent with the prompt, so
+scenarios probe what your agent actually does. The brief is sanitized first — API keys,
+tokens, emails, phone numbers and long account ids are redacted, and the prompt excerpt
+is truncated — but it does leave your machine in the LLM payload. Use `--smoke-only` to
+skip LLM generation entirely.
 
 ```bash
 # After wiretap init (or with keys already in .env)
@@ -115,6 +127,10 @@ uv run wiretap suite generate --suite vapi \
   --categories emotional,linguistic,compliance --tests-per-category 5 \
   --purpose "cancellation and refunds"
 ```
+
+Refills read the agent brief back from `~/.wiretap/graphs/<suite>.graph.json`, so an
+imported suite stays grounded without another API call. Without a graph (a
+`--purpose`-only suite) generation falls back to purpose plus category guidance.
 
 Same flow in the UI: connect agent → configure test agent → pick categories → generate.
 

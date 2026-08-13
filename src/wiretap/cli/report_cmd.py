@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 from rich import print
 
+from wiretap.cli.style import tool_summary
 from wiretap.suite import iter_simulations
 
 
@@ -29,6 +30,9 @@ def register(app: typer.Typer) -> None:
             print(
                 f"[{status}] {art.suite_id}/{title} — {art.judge.reason[:160]}"
             )
-            if not art.passed and art.judge.suggestions:
+            if not art.passed:
+                tools = tool_summary(art)
+                if tools:
+                    print(f"  {tools}")
                 for s in art.judge.suggestions:
                     print(f"  • {s}")

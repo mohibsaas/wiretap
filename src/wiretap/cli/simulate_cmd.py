@@ -230,6 +230,9 @@ def register(app: typer.Typer) -> None:
                     failures += 1
                     for f in art.rules.failures:
                         print(f"    rule: {f}")
+                    tools = ui.tool_summary(art)
+                    if tools:
+                        print(f"    {tools}")
                     for s in art.judge.suggestions:
                         print(f"    • {s}")
         else:
@@ -240,10 +243,13 @@ def register(app: typer.Typer) -> None:
                 if not art.passed:
                     failures += 1
                     title = art.scenario_name or art.scenario_id
-                    if art.rules.failures or art.judge.suggestions:
+                    tools = ui.tool_summary(art)
+                    if art.rules.failures or art.judge.suggestions or tools:
                         print(f"[bold red]Fail details[/bold red] · {title}")
                         for f in art.rules.failures:
                             print(f"  rule: {f}")
+                        if tools:
+                            print(f"  {tools}")
                         for s in art.judge.suggestions:
                             print(f"  • {s}")
 

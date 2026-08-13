@@ -30,10 +30,27 @@ role, tools/flow nodes, and policies. Do not invent proprietary product facts
 that contradict the brief.
 </context>
 
+<grounding>
+- When agent_brief is present, ground every scenario in it — its stated role,
+  goals, constraints, tools and flow. Task, compliance and factual scenarios
+  must probe what this agent actually does.
+- Never invent tools, policies, prices or capabilities that contradict the
+  brief. If a detail is not in the brief, have the caller ask for it rather
+  than asserting it.
+- agent_brief.irreversible_tools are side effects the caller cannot undo; they
+  are good targets for confirmation and escalation scenarios.
+- Never put any agent_brief.end_call_phrases value, or a farewell, in 'say'.
+  That hangs up the call and scores as an agent failure.
+- Write 'say' in agent_brief.language when one is given.
+- When agent_brief is absent or empty, fall back to purpose plus the category
+  guidance.
+</grounding>
+
 <rules>
 1. Output MUST be a single JSON array — no markdown fences, no commentary.
 2. Generate exactly the requested count of objects.
-3. Each object MUST use keys: name, identity, goal, say, success, excludes.
+3. Each object MUST use keys: name, identity, goal, say, success, excludes,
+   expected_tools.
 4. name: short human title (≤ 8 words), unique within the batch.
 5. identity: who the caller is (one sentence, third person).
 6. goal: what the caller wants by end of call (observable outcome).
@@ -42,6 +59,12 @@ that contradict the brief.
    words like "good" or "helpful" without a concrete behavior.
 9. excludes: list of banned substrings the live agent must not say (strings).
    Use [] unless the category needs policy red lines (compliance, adversarial).
+9a. expected_tools: names of tools the live agent MUST invoke for this scenario
+    to count as handled. Copy names EXACTLY from agent_brief.tools — never invent
+    one, and never guess at a tool that is not listed there. Use [] when the
+    scenario needs no tool, when the caller is expected to abandon the call, or
+    when no agent_brief is provided. Prefer [] over a speculative guess: a tool
+    listed here is treated as a hard expectation by the judge.
 10. Scenarios in one batch must differ in caller intent, pressure, or edge case —
     not just reword the same plot.
 11. Prefer positive instructions in success ("Agent does X") over vague negatives.
@@ -57,7 +80,8 @@ that contradict the brief.
     "goal": "string",
     "say": "string",
     "success": "string",
-    "excludes": ["string"]
+    "excludes": ["string"],
+    "expected_tools": ["string"]
   }
 ]
 </field_schema>
@@ -75,7 +99,7 @@ def suite_generation_context(
     few_shot_examples: list[dict[str, Any]],
     agent_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    ctx: dict[str, Any] = {
+    context: dict[str, Any] = {
         "agent_name": agent_name,
         "purpose": purpose.strip() or "(none provided)",
         "category": category,
@@ -84,9 +108,10 @@ def suite_generation_context(
         "count": count,
         "few_shot_examples": few_shot_examples,
     }
-    if agent_brief:
-        ctx["agent_brief"] = agent_brief
-    return ctx
+    # Sanitized upstream in services.agent_brief; empty rather than partial so
+    # the model has no half-filled brief to over-read.
+    context["agent_brief"] = agent_brief or {}
+    return context
 
 
 def suite_generation_user_message(count: int, context: dict[str, Any]) -> str:

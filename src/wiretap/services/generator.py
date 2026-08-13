@@ -23,7 +23,6 @@ from wiretap.models import (
     SuiteConfig,
     TransportKind,
 )
-from wiretap.prompts.agent_brief import agent_brief_from_purpose_only
 from wiretap.prompts.categories import (
     CATEGORY_CATALOG,
     DEFAULT_CATEGORIES,
@@ -43,8 +42,22 @@ from wiretap.prompts.suite_generation import (
     suite_generation_user_message,
 )
 from wiretap.providers.llm import complete
+from wiretap.services.agent_brief import end_call_phrases
+
+GENERATION_MAX_TOKENS = 5000
+RETRY_MAX_TOKENS = 3000
+
+# A caller opening with a farewell hangs up the call, which then scores as an
+# agent failure. Rejected at generation time rather than debugged later.
+_FAREWELL_PATTERNS = (
+    r"\bgoodbye\b",
+    r"\bbye\b",
+    r"\bhave a (?:nice|good|great) (?:day|night|one)\b",
+    r"\btalk to you later\b",
+)
 
 ProgressCallback = Callable[[dict[str, Any]], None]
+
 
 def list_categories() -> list[dict[str, Any]]:
     out = []
@@ -123,7 +136,46 @@ def _extract_json_array(text: str) -> list[Any]:
     return data
 
 
-def _normalize_test(item: Any, *, category: str, index: int) -> dict[str, Any]:
+def _says_stop_word(say: str, banned: list[str]) -> bool:
+    """True when a caller line would end the call instead of starting it."""
+    low = say.lower()
+    if any(phrase.lower() in low for phrase in banned if phrase.strip()):
+        return True
+    return any(re.search(pattern, low) for pattern in _FAREWELL_PATTERNS)
+
+
+def _allowed_tools(brief: dict[str, Any] | None) -> set[str]:
+    """Tool names the agent actually has, per its imported graph."""
+    if not brief:
+        return set()
+    tools = brief.get("tools")
+    if not isinstance(tools, list):
+        return set()
+    out = set()
+    for tool in tools:
+        if isinstance(tool, dict):
+            name = str(tool.get("name") or "").strip()
+            if name:
+                out.add(name)
+    return out
+
+
+def _expected_tools(raw: Any, allowed: set[str]) -> list[str]:
+    """Keep only tools the agent really has — a hallucinated name would fail
+    every run against an expectation the agent could never satisfy."""
+    if not isinstance(raw, list) or not allowed:
+        return []
+    out: list[str] = []
+    for item in raw:
+        name = str(item).strip()
+        if name in allowed and name not in out:
+            out.append(name)
+    return out
+
+
+def _normalize_test(
+    item: Any, *, category: str, index: int, allowed_tools: set[str] | None = None
+) -> dict[str, Any]:
     if not isinstance(item, dict):
         raise ValueError(f"Test case {index} in {category} is not an object")
     name = str(item.get("name") or "").strip() or f"{category} scenario {index + 1}"
@@ -142,7 +194,33 @@ def _normalize_test(item: Any, *, category: str, index: int) -> dict[str, Any]:
         "say": say,
         "success": success,
         "excludes": excludes,
+        "expected_tools": _expected_tools(
+            item.get("expected_tools"), allowed_tools or set()
+        ),
     }
+
+
+def _normalize_batch(
+    items: list[Any],
+    *,
+    category: str,
+    banned: list[str],
+    start_index: int = 0,
+    allowed_tools: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Normalize items, dropping any whose opening line would end the call."""
+    out: list[dict[str, Any]] = []
+    for offset, item in enumerate(items):
+        test = _normalize_test(
+            item,
+            category=category,
+            index=start_index + offset,
+            allowed_tools=allowed_tools,
+        )
+        if _says_stop_word(str(test["say"]), banned):
+            continue
+        out.append(test)
+    return out
 
 
 def llm_generate_category_tests(
@@ -152,16 +230,14 @@ def llm_generate_category_tests(
     agent_name: str,
     purpose: str = "",
     model: str = "gpt-4o-mini",
-    agent_brief: dict[str, Any] | None = None,
+    brief: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Ask the LLM for ``count`` distinct test cases in one category."""
     meta = CATEGORY_CATALOG[category]
     n = max(1, min(MAX_TESTS_PER_CATEGORY, count))
     examples = meta.get("examples") or []
-    brief = agent_brief or agent_brief_from_purpose_only(
-        agent_name=agent_name,
-        purpose=purpose,
-    )
+    banned = end_call_phrases(brief)
+    allowed_tools = _allowed_tools(brief)
     context = suite_generation_context(
         agent_name=agent_name,
         purpose=purpose,
@@ -182,12 +258,17 @@ def llm_generate_category_tests(
             },
         ],
         temperature=0.7,
-        max_tokens=3500,
+        max_tokens=GENERATION_MAX_TOKENS,
     )
-    items = _extract_json_array(content)
-    if len(items) < n:
+    out = _normalize_batch(
+        _extract_json_array(content),
+        category=category,
+        banned=banned,
+        allowed_tools=allowed_tools,
+    )
+    if len(out) < n:
         # Ask once more for the missing count rather than padding templates.
-        need = n - len(items)
+        # Items dropped by the stop-word guard are re-requested here too.
         extra = complete(
             model=model,
             messages=[
@@ -195,21 +276,27 @@ def llm_generate_category_tests(
                 {
                     "role": "user",
                     "content": suite_generation_retry_user_message(
-                        need=need,
+                        need=n - len(out),
                         category=category,
                         agent_name=agent_name,
-                        existing_names=[
-                            str(i.get("name")) for i in items if isinstance(i, dict)
-                        ],
+                        existing_names=[str(t["name"]) for t in out],
                         context=context,
                     ),
                 },
             ],
             temperature=0.8,
-            max_tokens=2000,
+            max_tokens=RETRY_MAX_TOKENS,
         )
-        items.extend(_extract_json_array(extra))
-    out = [_normalize_test(item, category=category, index=i) for i, item in enumerate(items[:n])]
+        out.extend(
+            _normalize_batch(
+                _extract_json_array(extra),
+                category=category,
+                banned=banned,
+                start_index=len(out),
+                allowed_tools=allowed_tools,
+            )
+        )
+    out = out[:n]
     if len(out) < n:
         raise ValueError(
             f"LLM returned only {len(out)}/{n} tests for category {category!r}"
@@ -227,7 +314,7 @@ def generate_suite(
     tests_per_category: int = 5,
     transport: str = "webrtc",
     model: str | None = None,
-    agent_brief: dict[str, Any] | None = None,
+    brief: dict[str, Any] | None = None,
     on_progress: ProgressCallback | None = None,
 ) -> SuiteConfig:
     """Build a SuiteConfig by LLM-generating scenarios for each category.
@@ -241,6 +328,10 @@ def generate_suite(
     personas: list[Persona] = []
     scenarios: list[Scenario] = []
     purpose_bit = purpose.strip()
+    # With a brief the model already grounds in the agent, so stapling the
+    # purpose onto every goal and success criteria is just noise — and the
+    # success suffix would dilute every judge prompt.
+    staple_purpose = bool(purpose_bit) and not brief
     seen_ids: set[str] = set()
     seen_personas: set[str] = set()
     total = len(cats) * n
@@ -263,7 +354,7 @@ def generate_suite(
             agent_name=agent_name or "the agent",
             purpose=purpose_bit,
             model=model_name,
-            agent_brief=agent_brief,
+            brief=brief,
         )
         for t in tests:
             pid = _unique_slug(_persona_slug(str(t["identity"])), seen_personas)
@@ -273,13 +364,13 @@ def generate_suite(
                     name=str(t["name"]),
                     identity=t["identity"],
                     goal=t["goal"]
-                    + (f" Context: {purpose_bit}" if purpose_bit else ""),
+                    + (f" Context: {purpose_bit}" if staple_purpose else ""),
                     personality=DEFAULT_PERSONA_PERSONALITY,
                     constraints=[DO_NOT_REVEAL_TEST_BOT],
                 )
             )
             success = t["success"]
-            if purpose_bit:
+            if staple_purpose:
                 success = f"{success} Align with purpose: {purpose_bit}"
             scenarios.append(
                 Scenario(
@@ -289,6 +380,7 @@ def generate_suite(
                     max_turns=10,
                     success_criteria=success,
                     rubric=DEFAULT_GENERATED_RUBRIC,
+                    expected_tools=list(t.get("expected_tools") or []),
                     rules=RuleCheck(excludes=list(t.get("excludes") or [])),
                     beats=[Beat(at_turn=1, say=t["say"])],
                     category=cat,
@@ -350,7 +442,7 @@ def fill_suite_scenarios(
     purpose: str = "",
     agent_name: str = "agent",
     model: str | None = None,
-    agent_brief: dict[str, Any] | None = None,
+    brief: dict[str, Any] | None = None,
     on_progress: ProgressCallback | None = None,
 ) -> SuiteConfig:
     """Replace personas/scenarios on an existing suite; keep agent / models / speech."""
@@ -363,7 +455,7 @@ def fill_suite_scenarios(
         tests_per_category=tests_per_category,
         transport=suite.agent.transport.value,
         model=model or suite.models.simulator,
-        agent_brief=agent_brief,
+        brief=brief,
         on_progress=on_progress,
     )
     suite.personas = generated.personas

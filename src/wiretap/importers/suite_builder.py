@@ -94,16 +94,23 @@ def suite_from_prompt(
     )
 
 
-def _guess_goal(prompt: str, agent_name: str) -> str:
+def first_instructive_line(prompt: str, *, limit: int = 200) -> str:
+    """First line substantial enough to read as an instruction. '' when none."""
     text = (prompt or "").strip()
     if not text:
-        return f"Complete a typical task with {agent_name or 'the agent'}"
-    # First instructive sentence-ish
+        return ""
     for line in text.splitlines():
         line = line.strip(" -*\t")
         if len(line) > 40:
-            return line[:200]
-    return text[:200]
+            return line[:limit]
+    return text[:limit]
+
+
+def _guess_goal(prompt: str, agent_name: str) -> str:
+    line = first_instructive_line(prompt)
+    if not line:
+        return f"Complete a typical task with {agent_name or 'the agent'}"
+    return line
 
 
 def slug(value: str) -> str:

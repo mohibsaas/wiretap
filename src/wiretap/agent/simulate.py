@@ -20,6 +20,7 @@ from wiretap.models import (
 from wiretap.providers.speech import suggest_pyai_if_unconfigured
 from wiretap.suite import latest_baseline, regression_failed, save_simulation
 from wiretap.suite.audio import CallRecorder, save_call_audio
+from wiretap.toolcalls import collect_tool_calls, tool_diff
 from wiretap.transport import build_transport
 
 
@@ -148,6 +149,13 @@ async def simulate_scenario(
     simulation_id = uuid.uuid4().hex
     _emit(on_progress, phase="judging", scenario=scenario, detail="checking rules + judge…")
     audio_rel = save_call_audio(simulation_id, recorder, cwd)
+    tool_calls, tool_capture = await collect_tool_calls(transport.call_ref(), suite.agent)
+    missing_tools, unexpected_tools = tool_diff(scenario.expected_tools, tool_calls)
+    tool_metrics: dict[str, Any] = {
+        "tool_calls": len(tool_calls),
+        "missing_tools": missing_tools,
+        "unexpected_tools": unexpected_tools,
+    }
     persona_title = (persona.name or persona.identity or persona.id).strip()
     scenario_title = (scenario.name or scenario.id).strip()
 
@@ -167,6 +175,7 @@ async def simulate_scenario(
             persona_name=persona_title,
             passed=False,
             transcript=transcript,
+            tool_calls=tool_calls,
             judge=JudgeResult(
                 passed=False,
                 reason="Inconclusive: test agent broke contract — "
@@ -174,8 +183,9 @@ async def simulate_scenario(
                 suggestions=[],
             ),
             rules=run_rules(transcript, scenario.rules),
-            metrics={"turns": len(transcript)},
+            metrics={"turns": len(transcript), **tool_metrics},
             meta={
+                "tool_capture": tool_capture,
                 "transport": suite.agent.transport.value,
                 "orchestrator": orch_meta,
                 "inconclusive": True,
@@ -202,6 +212,9 @@ async def simulate_scenario(
         turns=transcript,
         success_criteria=scenario.success_criteria,
         rubric=scenario.rubric,
+        expected_tools=scenario.expected_tools,
+        tool_calls=tool_calls,
+        tool_capture=tool_capture,
     )
     passed = bool(rules.passed and judge.passed)
     if not rules.passed and judge.passed:
@@ -222,10 +235,12 @@ async def simulate_scenario(
         persona_name=persona_title,
         passed=passed,
         transcript=transcript,
+        tool_calls=tool_calls,
         judge=judge,
         rules=rules,
-        metrics={"turns": len(transcript)},
+        metrics={"turns": len(transcript), **tool_metrics},
         meta={
+            "tool_capture": tool_capture,
             "transport": suite.agent.transport.value,
             "orchestrator": orch_meta,
             "agent_id": suite.agent.agent_id,
