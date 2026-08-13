@@ -52,11 +52,13 @@ def _register() -> None:
         init_cmd,
         report_cmd,
         simulate_cmd,
+        simulator_cmd,
         suite_cmd,
         ui_cmd,
     )
 
     init_cmd.register(app)
+    simulator_cmd.register(app)
     suite_cmd.register(app)
     simulate_cmd.register(app)
     report_cmd.register(app)

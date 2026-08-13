@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from wiretap.models import AgentTarget, TransportKind
-from wiretap.transport.base import CallRef, Inbound, Transport
+from wiretap.transport.base import Inbound, Transport
 from wiretap.transport.text import TextEchoTransport
 
 
@@ -67,4 +67,4 @@ def build_transport(target: AgentTarget) -> Transport:
     )
 
 
-__all__ = ["CallRef", "Inbound", "TextEchoTransport", "Transport", "build_transport"]
+__all__ = ["Inbound", "TextEchoTransport", "Transport", "build_transport"]

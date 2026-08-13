@@ -22,7 +22,7 @@ from wiretap.prompts.test_agent import (
     caller_role_message,
     phase_task_message,
 )
-from wiretap.providers.llm import complete
+from wiretap.providers.llm import acomplete
 
 
 @dataclass
@@ -54,6 +54,8 @@ def phases_to_nodes(
         goal=persona.goal,
         personality=persona.personality or "neutral",
         success_criteria=success_criteria,
+        constraints=list(persona.constraints or []),
+        knowledge=dict(persona.knowledge or {}),
     )
     if not phases:
         return [
@@ -158,7 +160,7 @@ class TestAgentOrchestrator:
     def observe_agent(self, text: str) -> None:
         self.history.append({"role": "user", "content": agent_said_message(text)})
 
-    def next_utterance(self) -> tuple[str, bool]:
+    async def next_utterance(self) -> tuple[str, bool]:
         self._caller_turn += 1
         self._turns_in_node += 1
         beat = beat_for_turn(self.beats, self._caller_turn)
@@ -173,7 +175,9 @@ class TestAgentOrchestrator:
                 "content": TEST_AGENT_NEXT_REPLY,
             }
         )
-        text = complete(
+        # Must be async — sync LiteLLM blocks the whole event loop and
+        # serializes concurrent scenario dials.
+        text = await acomplete(
             model=self.model,
             messages=self.history,
             temperature=self.temperature,

@@ -48,6 +48,66 @@ def test_list_and_get_suite(client: TestClient) -> None:
     ) is None
 
 
+def test_update_suite_cases(client: TestClient, tmp_path: Path) -> None:
+    detail = client.get("/api/suites/default")
+    assert detail.status_code == 200
+    suite = detail.json()
+    scenario = suite["scenarios"][0]
+    persona = next(p for p in suite["personas"] if p["id"] == scenario["persona_id"])
+    res = client.put(
+        "/api/suites/default",
+        json={
+            "cases": [
+                {
+                    "scenario_id": scenario["id"],
+                    "persona_id": persona["id"],
+                    "name": "Updated persona name",
+                    "category": "Compliance",
+                    "identity": "A revised identity for the caller.",
+                    "goal": "Complete the revised goal.",
+                    "constraints": ["Stay in character", "Never accept the first no"],
+                    "max_turns": 9,
+                    "success_criteria": scenario.get("success_criteria") or "ok",
+                    "rubric": scenario.get("rubric") or "",
+                }
+            ]
+        },
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    sc = next(s for s in body["scenarios"] if s["id"] == scenario["id"])
+    pe = next(p for p in body["personas"] if p["id"] == persona["id"])
+    assert sc["name"] == "Updated persona name"
+    assert sc["category"] == "Compliance"
+    assert sc["max_turns"] == 9
+    assert pe["identity"] == "A revised identity for the caller."
+    assert pe["goal"] == "Complete the revised goal."
+    assert pe["constraints"] == ["Stay in character", "Never accept the first no"]
+    # Persisted to disk
+    on_disk = load_suite(tmp_path / ".wiretap" / "suites" / "default.yaml")
+    assert on_disk.scenarios[0].name == "Updated persona name"
+
+
+def test_update_suite_rejects_invalid_name(client: TestClient) -> None:
+    res = client.put(
+        "/api/suites/bad!!!",
+        json={
+            "cases": [
+                {
+                    "scenario_id": "x",
+                    "persona_id": "y",
+                    "name": "nope",
+                    "identity": "",
+                    "goal": "",
+                    "constraints": [],
+                    "max_turns": 5,
+                }
+            ]
+        },
+    )
+    assert res.status_code == 400
+
+
 def test_simulations_list_and_get(client: TestClient, tmp_path: Path) -> None:
     art = SimulationArtifact(
         suite_id="default",

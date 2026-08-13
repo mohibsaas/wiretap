@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { client, type Batch } from "@/lib/api";
+import { simulationVerdict } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -78,10 +79,13 @@ export function BatchPage() {
   return (
     <div className="space-y-6">
       <div>
-        <Link to="/" className="text-xs text-muted-foreground hover:text-foreground">
-          ← Suites
+        <Link
+          to="/evaluations"
+          className="text-xs text-muted-foreground hover:text-foreground"
+        >
+          ← Simulations
         </Link>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">Live batch</h1>
+        <h1 className="mt-2 text-[22px] font-semibold tracking-[-0.005em]">Live run</h1>
         <p className="mt-1 font-mono text-xs text-muted-foreground">{batchId}</p>
       </div>
       {error && <p className="text-sm text-fail">{error}</p>}
@@ -101,10 +105,10 @@ export function BatchPage() {
           <span className="text-muted-foreground">suite {batch.suite}</span>
           {done && (
             <Link
-              to={`/evaluations/${batchId}`}
-              className="text-accent underline-offset-2 hover:underline"
+              to={`/evaluations?run=${encodeURIComponent(batchId)}`}
+              className="text-primary underline-offset-2 hover:underline"
             >
-              View evaluation run →
+              View tests →
             </Link>
           )}
         </div>
@@ -163,7 +167,9 @@ export function BatchPage() {
             <CardTitle>Simulations</CardTitle>
           </CardHeader>
           <CardContent className="divide-y divide-border p-0">
-            {batch.results.map((r) => (
+            {batch.results.map((r) => {
+              const v = simulationVerdict(r);
+              return (
               <Link
                 key={r.simulation_id || r.scenario_id}
                 to={`/evaluations/${batchId}/scenarios/${r.simulation_id}`}
@@ -172,13 +178,13 @@ export function BatchPage() {
                 <span className="text-sm font-medium">
                   {r.scenario_name || r.scenario_id}
                 </span>
-                <Badge
-                  variant={r.meta?.inconclusive ? "warn" : r.passed ? "pass" : "fail"}
-                >
-                  {r.meta?.inconclusive ? "inconclusive" : r.passed ? "pass" : "fail"}
+                <Badge variant={v.variant}>
+                  {v.label.toLowerCase()}
+                  {v.pct != null ? ` · ${v.pct}%` : ""}
                 </Badge>
               </Link>
-            ))}
+              );
+            })}
           </CardContent>
         </Card>
       )}

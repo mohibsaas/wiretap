@@ -15,6 +15,11 @@ speech:
   stt: pyai
   tts: pyai
 
+# Goal-match judge (optional — defaults: fail <50%, partial <70%, pass ≥70%)
+judge:
+  fail_below: 0.5
+  pass_threshold: 0.7
+
 personas:
   - id: priya
     identity: "Priya, 34, small business owner"
@@ -24,6 +29,9 @@ personas:
       - "Do not reveal you are a test bot"
     knowledge:
       email: "priya@example.com"
+      zip_code: "90210"
+      callback_phone: "5551234567"
+      full_name: "Priya Sharma"
 
 scenarios:
   - id: cancel_refund

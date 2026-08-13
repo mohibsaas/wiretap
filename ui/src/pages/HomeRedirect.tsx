@@ -1,23 +1,33 @@
 import { useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { client } from "@/lib/api";
+import { DashboardPage } from "@/pages/DashboardPage";
 
 export function HomeRedirect() {
   const navigate = useNavigate();
-  const [done, setDone] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [needsOnboard, setNeedsOnboard] = useState(false);
 
   useEffect(() => {
     client
       .onboardStatus()
       .then((s) => {
-        navigate(s.needs_onboarding ? "/onboard" : "/suites", { replace: true });
+        if (s.needs_onboarding) {
+          setNeedsOnboard(true);
+          navigate("/onboard", { replace: true });
+        }
       })
-      .catch(() => navigate("/suites", { replace: true }))
-      .finally(() => setDone(true));
+      .catch(() => {
+        /* stay on dashboard */
+      })
+      .finally(() => setReady(true));
   }, [navigate]);
 
-  if (!done) {
+  if (!ready) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
-  return <Navigate to="/suites" replace />;
+  if (needsOnboard) {
+    return <Navigate to="/onboard" replace />;
+  }
+  return <DashboardPage />;
 }

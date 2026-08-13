@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
-from rich.console import Console, Group
+from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -14,6 +14,7 @@ from rich.table import Table
 from rich.text import Text
 
 from wiretap.agent.events import SimEvent, truncate
+from wiretap.cli.style import ACCENT, ERR, MUTED, OK, WARN
 
 RowState = Literal[
     "queued",
@@ -50,6 +51,7 @@ class SimulateDisplay:
     platform: str
     batch_id: str
     total: int
+    concurrency: int = 1
     console: Console = field(default_factory=Console)
     rows: dict[str, ScenarioRow] = field(default_factory=dict)
     _live: Live | None = field(default=None, repr=False)
@@ -62,9 +64,9 @@ class SimulateDisplay:
 
     def __enter__(self) -> Self:
         self._overall = Progress(
-            SpinnerColumn(style="cyan"),
+            SpinnerColumn(style=ACCENT),
             TextColumn("[bold]{task.description}"),
-            BarColumn(bar_width=28),
+            BarColumn(bar_width=28, style=ACCENT, complete_style=ACCENT),
             TextColumn("{task.completed}/{task.total}"),
             TimeElapsedColumn(),
             console=self.console,
@@ -148,21 +150,25 @@ class SimulateDisplay:
 
     def _render(self) -> Group:
         header = Text.assemble(
-            ("Suite ", "dim"),
-            (self.suite_label, "bold cyan"),
-            ("  ·  ", "dim"),
-            ("agent ", "dim"),
-            (self.agent_label, "cyan"),
-            ("  ·  ", "dim"),
+            ("◈ ", f"bold {ACCENT}"),
+            ("Suite ", MUTED),
+            (self.suite_label, f"bold {ACCENT}"),
+            ("  ·  ", MUTED),
+            ("agent ", MUTED),
+            (self.agent_label, ACCENT),
+            ("  ·  ", MUTED),
             (self.platform or "local", "magenta"),
             "\n",
-            ("Evaluation ", "dim"),
-            (self.batch_id, "cyan"),
+            ("Evaluation ", MUTED),
+            (self.batch_id, ACCENT),
+            ("  ·  ", MUTED),
+            ("concurrency ", MUTED),
+            (str(self.concurrency), ACCENT),
         )
 
         table = Table(
             show_header=True,
-            header_style="bold dim",
+            header_style=f"bold {ACCENT}",
             box=None,
             pad_edge=False,
             expand=True,
@@ -188,45 +194,51 @@ class SimulateDisplay:
                 elapsed or "—",
             )
 
-        body = Panel(table, border_style="dim", padding=(0, 1))
+        body = Panel(table, border_style=ACCENT, padding=(0, 1))
         footer = self._overall if self._overall is not None else Text("")
         return Group(header, "", body, "", footer)
 
     def _status_cell(self, row: ScenarioRow) -> tuple[str, Text]:
         spin = self._spin_frame()
         if row.state == "queued":
-            return "○", Text(row.detail or "queued", style="dim")
+            return "○", Text(row.detail or "queued", style=MUTED)
         if row.state == "connecting":
-            return spin, Text(row.detail or "connecting…", style="cyan")
+            return spin, Text(row.detail or "connecting…", style=ACCENT)
         if row.state == "waiting_agent":
-            return spin, Text(row.detail or "waiting…", style="cyan")
+            return spin, Text(row.detail or "waiting…", style=ACCENT)
         if row.state == "turn":
             return "●", Text(row.detail, style="white")
         if row.state in {"hanging_up", "judging", "saving"}:
-            return spin, Text(row.detail, style="yellow")
+            return spin, Text(row.detail, style=WARN)
         if row.state == "finished":
             if row.result == "PASS":
                 return "✔", Text.assemble(
-                    ("PASS", "bold green"),
+                    ("PASS", f"bold {OK}"),
                     ("  ", ""),
-                    (row.reason, "dim"),
+                    (row.reason, MUTED),
+                )
+            if row.result == "PARTIAL":
+                return "◐", Text.assemble(
+                    ("PARTIAL", f"bold {WARN}"),
+                    ("  ", ""),
+                    (row.reason, MUTED),
                 )
             if row.result == "INCONCLUSIVE":
                 return "!", Text.assemble(
-                    ("INCONCLUSIVE", "bold yellow"),
+                    ("INCONCLUSIVE", f"bold {WARN}"),
                     ("  ", ""),
-                    (row.reason, "dim"),
+                    (row.reason, MUTED),
                 )
             return "✖", Text.assemble(
-                ("FAIL", "bold red"),
+                ("FAIL", f"bold {ERR}"),
                 ("  ", ""),
-                (row.reason, "dim"),
+                (row.reason, MUTED),
             )
         if row.state == "failed":
             return "✖", Text.assemble(
-                ("ERROR", "bold red"),
+                ("ERROR", f"bold {ERR}"),
                 ("  ", ""),
-                (row.reason, "dim"),
+                (row.reason, MUTED),
             )
         return "·", Text(row.detail or row.state)
 
@@ -235,3 +247,159 @@ class SimulateDisplay:
         frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
         return frames[int(time.monotonic() * 10) % len(frames)]
 
+
+def _goal_match_line(judge: Any) -> Text:
+    """Render score as a percentage with band labels."""
+    score = getattr(judge, "score", None)
+    verdict = str(getattr(judge, "verdict", "") or "fail").lower()
+    fail_below = float(getattr(judge, "fail_below", 0.5) or 0.5)
+    pass_at = float(getattr(judge, "pass_at", 0.7) or 0.7)
+    line = Text()
+    if score is None:
+        line.append("Goal match ", style=MUTED)
+        line.append("—", style=MUTED)
+        return line
+    pct = round(float(score) * 100)
+    color = OK if verdict == "pass" else WARN if verdict == "partial" else ERR
+    line.append("Goal match ", style=MUTED)
+    line.append(f"{pct}%", style=f"bold {color}")
+    line.append("  ·  ", style=MUTED)
+    line.append(verdict.upper(), style=f"bold {color}")
+    line.append(
+        f"  (fail < {round(fail_below * 100)}%  ·  "
+        f"partial < {round(pass_at * 100)}%  ·  "
+        f"pass ≥ {round(pass_at * 100)}%)",
+        style=MUTED,
+    )
+    return line
+
+
+def print_fail_details(art: Any, *, console: Console | None = None) -> None:
+    """Pretty failure / partial card — goal match % + suggestions."""
+    out = console or Console()
+    title = str(
+        getattr(art, "scenario_name", None)
+        or getattr(art, "scenario_id", None)
+        or "scenario"
+    )
+    judge = getattr(art, "judge", None)
+    rules = getattr(art, "rules", None)
+    verdict = str(getattr(judge, "verdict", "") or "fail").lower() if judge else "fail"
+    is_partial = verdict == "partial"
+
+    head = Text()
+    if is_partial:
+        head.append(" PARTIAL ", style=f"bold black on {WARN}")
+    else:
+        head.append(" FAIL ", style=f"bold white on {ERR}")
+    head.append("  ")
+    head.append(title, style="bold")
+
+    parts: list[RenderableType] = [head]
+    if judge is not None:
+        parts.extend([Text(), _goal_match_line(judge)])
+        reason = str(getattr(judge, "reason", "") or "").strip()
+        if reason:
+            parts.extend([Text(), Text(reason, style=MUTED)])
+
+    failures = list(getattr(rules, "failures", None) or []) if rules else []
+    if failures:
+        parts.append(Text())
+        parts.append(Text("Rules", style=f"bold {ACCENT}"))
+        for f in failures:
+            line = Text()
+            line.append("  ✗ ", style=ERR)
+            line.append(str(f))
+            parts.append(line)
+
+    suggestions = list(getattr(judge, "suggestions", None) or []) if judge else []
+    if suggestions:
+        parts.append(Text())
+        parts.append(Text("Improve", style=f"bold {ACCENT}"))
+        for s in suggestions:
+            line = Text()
+            line.append("  → ", style=ACCENT)
+            line.append(str(s).strip())
+            parts.append(line)
+
+    border = WARN if is_partial else ERR
+    out.print(Panel(Group(*parts), border_style=border, padding=(0, 1)))
+    out.print()
+
+
+def print_pass_details(art: Any, *, console: Console | None = None) -> None:
+    """Optional compact pass card with goal-match %."""
+    out = console or Console()
+    title = str(
+        getattr(art, "scenario_name", None)
+        or getattr(art, "scenario_id", None)
+        or "scenario"
+    )
+    judge = getattr(art, "judge", None)
+    head = Text()
+    head.append(" PASS ", style=f"bold white on {OK}")
+    head.append("  ")
+    head.append(title, style="bold")
+    parts: list[RenderableType] = [head]
+    if judge is not None:
+        parts.extend([Text(), _goal_match_line(judge)])
+    out.print(Panel(Group(*parts), border_style=OK, padding=(0, 1)))
+    out.print()
+
+
+def print_inconclusive_details(art: Any, *, console: Console | None = None) -> None:
+    """Compact inconclusive card (harness / contract)."""
+    out = console or Console()
+    title = str(
+        getattr(art, "scenario_name", None)
+        or getattr(art, "scenario_id", "")
+        or "scenario"
+    )
+    reason = str(getattr(getattr(art, "judge", None), "reason", "") or "").strip()
+    head = Text()
+    head.append(" INCONCLUSIVE ", style=f"bold black on {WARN}")
+    head.append("  ")
+    head.append(title, style="bold")
+    if reason:
+        out.print(
+            Panel(Group(head, Text(), Text(reason, style=MUTED)), border_style=WARN, padding=(0, 1))
+        )
+    else:
+        out.print(Panel(head, border_style=WARN, padding=(0, 1)))
+    out.print()
+
+
+def print_run_summary(
+    *,
+    passed: int,
+    failed: int,
+    partial: int = 0,
+    inconclusive: int,
+    total: int,
+    batch_id: str,
+    console: Console | None = None,
+) -> None:
+    """Final evaluation footer matching suite/init styling."""
+    out = console or Console()
+    line = Text()
+    line.append("◈ ", style=f"bold {ACCENT}")
+    line.append("Done", style=f"bold {ACCENT}")
+    line.append("  ")
+    line.append(f"{passed} pass", style=f"bold {OK}")
+    line.append("  ·  ", style=MUTED)
+    if partial:
+        line.append(f"{partial} partial", style=f"bold {WARN}")
+        line.append("  ·  ", style=MUTED)
+    line.append(f"{failed} fail", style=f"bold {ERR}")
+    line.append("  ·  ", style=MUTED)
+    line.append(f"{inconclusive} inconclusive", style=f"bold {WARN}")
+    line.append(f"  ({total} total)", style=MUTED)
+    line.append("\n")
+    line.append("Evaluation ", style=MUTED)
+    line.append(batch_id, style=ACCENT)
+    line.append("\n", style="")
+    line.append(
+        "Bands  fail <50%  ·  partial 50–69%  ·  pass ≥70%  (suite-configurable)",
+        style=MUTED,
+    )
+    out.print(Panel(line, border_style=ACCENT, padding=(0, 1)))
