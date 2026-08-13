@@ -25,8 +25,8 @@ from wiretap.services.onboard import (
 )
 from wiretap.services.secrets import key_status, load_dotenv, upsert_secrets
 from wiretap.services.simulations import get_simulation_detail, list_simulations
-from wiretap.suite.evaluations import evaluation_run_detail, list_evaluation_runs
 from wiretap.services.suites import get_suite, list_suites, suite_public_dict
+from wiretap.suite.evaluations import evaluation_run_detail, list_evaluation_runs
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -78,33 +78,37 @@ class GenerateBody(BaseModel):
 
 
 def create_app(*, cwd: Path | None = None) -> FastAPI:
-    root = cwd or Path.cwd()
-    load_dotenv(root)
+    """Create the dashboard app.
+
+    ``cwd=None`` uses the global data dir (``~/.wiretap`` / ``WIRETAP_HOME``).
+    Pass an explicit ``cwd`` in tests to isolate under ``{cwd}/.wiretap``.
+    """
+    load_dotenv(cwd)
     app = FastAPI(title="wiretap", version=__version__)
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         return {
             "version": __version__,
-            "cwd": str(root),
-            "wiretap_root": str(wiretap_root(root)),
+            "cwd": str(cwd) if cwd is not None else str(Path.cwd()),
+            "wiretap_root": str(wiretap_root(cwd)),
         }
 
     @app.get("/api/onboard/status")
     def api_onboard_status() -> dict[str, Any]:
-        return onboard_status(root)
+        return onboard_status(cwd)
 
     @app.get("/api/secrets/status")
     def api_secrets_status() -> dict[str, bool]:
-        return key_status(root)
+        return key_status(cwd)
 
     @app.post("/api/secrets")
     def api_upsert_secrets(body: SecretsBody) -> dict[str, Any]:
         try:
-            updated = upsert_secrets(body.secrets, root)
+            updated = upsert_secrets(body.secrets, cwd)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        return {"updated": updated, "status": key_status(root)}
+        return {"updated": updated, "status": key_status(cwd)}
 
     @app.get("/api/categories")
     def api_categories() -> list[dict[str, Any]]:
@@ -124,7 +128,7 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
                 speech_api_key=body.speech_api_key,
                 stt_api_key=body.stt_api_key,
                 tts_api_key=body.tts_api_key,
-                cwd=root,
+                cwd=cwd,
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
@@ -144,7 +148,7 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
                 api_key=body.api_key,
                 api_secret=body.api_secret,
                 room_url=body.room_url,
-                cwd=root,
+                cwd=cwd,
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
@@ -166,23 +170,23 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
                 categories=body.categories,
                 tests_per_category=body.tests_per_category,
                 suite_name=body.suite_name,
-                cwd=root,
+                cwd=cwd,
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
     @app.get("/api/agents")
     def api_agents() -> list[dict[str, Any]]:
-        return list_agents(root)
+        return list_agents(cwd)
 
     @app.get("/api/suites")
     def api_list_suites() -> list[dict[str, Any]]:
-        return list_suites(root)
+        return list_suites(cwd)
 
     @app.get("/api/suites/{name}")
     def api_get_suite(name: str) -> dict[str, Any]:
         try:
-            suite = get_suite(name, root)
+            suite = get_suite(name, cwd)
         except FileNotFoundError as exc:
             raise HTTPException(404, str(exc)) from exc
         return suite_public_dict(suite, name=name)
@@ -200,7 +204,7 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
                 platform=body.platform,
                 token_env=body.token_env,
                 agent_from=body.agent_from,
-                cwd=root,
+                cwd=cwd,
             )
         except (KeyError, ValueError, FileNotFoundError) as exc:
             raise HTTPException(400, str(exc)) from exc
@@ -242,22 +246,22 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
     @app.get("/api/evaluations")
     def api_list_evaluations(limit: int = 40) -> list[dict[str, Any]]:
         """Parent evaluation runs (one suite execution each)."""
-        return list_evaluation_runs(root, limit=limit)
+        return list_evaluation_runs(cwd, limit=limit)
 
     @app.get("/api/evaluations/{batch_id}")
     def api_get_evaluation(batch_id: str) -> dict[str, Any]:
-        detail = evaluation_run_detail(batch_id, root)
+        detail = evaluation_run_detail(batch_id, cwd)
         if not detail:
             raise HTTPException(404, "evaluation not found")
         return detail
 
     @app.get("/api/simulations")
     def api_list_simulations(limit: int = 50) -> list[dict[str, Any]]:
-        return [a.model_dump(mode="json") for a in list_simulations(root, limit=limit)]
+        return [a.model_dump(mode="json") for a in list_simulations(cwd, limit=limit)]
 
     @app.get("/api/simulations/{simulation_id}")
     def api_get_simulation(simulation_id: str) -> dict[str, Any]:
-        art = get_simulation_detail(simulation_id, root)
+        art = get_simulation_detail(simulation_id, cwd)
         if not art:
             raise HTTPException(404, "simulation not found")
         return art.model_dump(mode="json")
@@ -266,12 +270,12 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
     def api_simulation_audio(simulation_id: str) -> FileResponse:
         from wiretap.suite.audio import resolve_audio_path
 
-        art = get_simulation_detail(simulation_id, root)
+        art = get_simulation_detail(simulation_id, cwd)
         if not art:
             raise HTTPException(404, "simulation not found")
         if not art.audio_path:
             raise HTTPException(404, "no audio for this simulation")
-        path = resolve_audio_path(art.audio_path, root)
+        path = resolve_audio_path(art.audio_path, cwd)
         if not path:
             raise HTTPException(404, "audio file missing")
         return FileResponse(path, media_type="audio/wav", filename=f"{simulation_id}.wav")

@@ -574,7 +574,7 @@ export function OnboardPage() {
             </label>
             <p className="text-xs text-muted-foreground">
               About {categories.length * perCat} scenarios
-              {status?.caller
+              {status?.caller_configured && status.caller?.llm_provider
                 ? ` · Test Agent ${status.caller.llm_provider} / STT ${status.caller.stt} / TTS ${status.caller.tts}`
                 : ` · Test Agent ${llmProvider} / STT ${stt} / TTS ${tts}`}
             </p>

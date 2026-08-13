@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 
 from wiretap.cli.main import app
 from wiretap.importers.agent_graph import AgentGraph
+from wiretap.paths import WIRETAP_HOME_ENV
 from wiretap.suite import load_suite
 
 VAPI_ASSISTANT = {
@@ -45,12 +46,21 @@ VAPI_ASSISTANT = {
 }
 
 
+def _isolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep data under the test dir and skip the interactive caller wizard."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(WIRETAP_HOME_ENV, str(tmp_path / ".wiretap"))
+    monkeypatch.setenv("VAPI_API_KEY", "vapi-test")
+    monkeypatch.setattr(
+        "wiretap.cli.prompts.ensure_caller_configured", lambda **kwargs: None
+    )
+
+
 @respx.mock
 def test_import_vapi_grounds_generation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VAPI_API_KEY", "vapi-test")
+    _isolate(monkeypatch, tmp_path)
     respx.get("https://api.vapi.ai/assistant/asst_1").mock(
         return_value=httpx.Response(200, json=VAPI_ASSISTANT)
     )
@@ -106,8 +116,7 @@ def test_import_vapi_grounds_generation(
 def test_import_smoke_only_skips_generation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VAPI_API_KEY", "vapi-test")
+    _isolate(monkeypatch, tmp_path)
     respx.get("https://api.vapi.ai/assistant/asst_1").mock(
         return_value=httpx.Response(200, json=VAPI_ASSISTANT)
     )

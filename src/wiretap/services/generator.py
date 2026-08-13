@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, Callable
 
 from wiretap.importers.suite_builder import slug
 from wiretap.models import (
@@ -55,6 +55,8 @@ _FAREWELL_PATTERNS = (
     r"\bhave a (?:nice|good|great) (?:day|night|one)\b",
     r"\btalk to you later\b",
 )
+
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 
 def list_categories() -> list[dict[str, Any]]:
@@ -268,8 +270,13 @@ def generate_suite(
     transport: str = "webrtc",
     model: str | None = None,
     brief: dict[str, Any] | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> SuiteConfig:
-    """Build a SuiteConfig by LLM-generating scenarios for each category."""
+    """Build a SuiteConfig by LLM-generating scenarios for each category.
+
+    ``on_progress`` receives dict events with ``kind`` in
+    ``start | category_start | category_done | done`` plus ``done``/``total``.
+    """
     cats = parse_categories(categories)
     n = max(1, min(MAX_TESTS_PER_CATEGORY, tests_per_category))
     model_name = (model or "gpt-4o-mini").strip() or "gpt-4o-mini"
@@ -282,8 +289,20 @@ def generate_suite(
     staple_purpose = bool(purpose_bit) and not brief
     seen_ids: set[str] = set()
     seen_personas: set[str] = set()
+    total = len(cats) * n
+    done = 0
+
+    def _emit(kind: str, **extra: Any) -> None:
+        if on_progress is None:
+            return
+        payload: dict[str, Any] = {"kind": kind, "done": done, "total": total}
+        payload.update(extra)
+        on_progress(payload)
+
+    _emit("start", categories=list(cats))
 
     for cat in cats:
+        _emit("category_start", category=cat, batch=n)
         tests = llm_generate_category_tests(
             category=cat,
             count=n,
@@ -321,6 +340,10 @@ def generate_suite(
                     category=cat,
                 )
             )
+        done += len(tests)
+        _emit("category_done", category=cat, batch=len(tests))
+
+    _emit("done")
 
     plat = (platform or "custom").lower().strip()
     try:
@@ -369,6 +392,7 @@ def fill_suite_scenarios(
     agent_name: str = "agent",
     model: str | None = None,
     brief: dict[str, Any] | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> SuiteConfig:
     """Replace personas/scenarios on an existing suite; keep agent / models / speech."""
     generated = generate_suite(
@@ -381,6 +405,7 @@ def fill_suite_scenarios(
         transport=suite.agent.transport.value,
         model=model or suite.models.simulator,
         brief=brief,
+        on_progress=on_progress,
     )
     suite.personas = generated.personas
     suite.scenarios = generated.scenarios
@@ -391,6 +416,7 @@ __all__ = [
     "CATEGORY_CATALOG",
     "DEFAULT_CATEGORIES",
     "MAX_TESTS_PER_CATEGORY",
+    "ProgressCallback",
     "fill_suite_scenarios",
     "generate_suite",
     "list_categories",

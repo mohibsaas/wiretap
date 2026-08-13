@@ -10,6 +10,7 @@ choice. Secret env names follow `{PROVIDER}_API_KEY` (with a few well-known alia
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -123,6 +124,9 @@ def _label(provider_id: str) -> str:
 
 @lru_cache(maxsize=1)
 def litellm_llm_provider_ids() -> tuple[str, ...]:
+    # Avoid LiteLLM's cold-start HTTP fetch of the public model cost map
+    # (multi-second hang on `wiretap status` / first catalog load).
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
     try:
         import litellm
 
@@ -181,6 +185,7 @@ def tts_providers() -> list[ProviderInfo]:
     ]
 
 
+@lru_cache(maxsize=1)
 def provider_catalog() -> dict[str, Any]:
     return {
         "defaults": {"llm": "openai", "stt": "pyai", "tts": "pyai", "voice": "alloy"},

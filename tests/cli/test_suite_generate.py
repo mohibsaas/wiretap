@@ -9,8 +9,9 @@ import pytest
 from typer.testing import CliRunner
 
 from wiretap.cli.main import app
-from wiretap.importers.agent_graph import AgentGraph, GraphNode, NodeType
+from wiretap.importers.agent_graph import AgentGraph, GraphNode, GraphTool, NodeType
 from wiretap.models import AgentTarget, SuiteConfig, TransportKind
+from wiretap.paths import WIRETAP_HOME_ENV
 from wiretap.suite import dump_suite, load_suite
 
 
@@ -31,6 +32,11 @@ def _fake_tests(count: int, category: str) -> list[dict]:
 @pytest.fixture()
 def runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     monkeypatch.chdir(tmp_path)
+    # Isolate CLI data under the test dir (global default is ~/.wiretap)
+    monkeypatch.setenv(WIRETAP_HOME_ENV, str(tmp_path / ".wiretap"))
+    monkeypatch.setattr(
+        "wiretap.cli.prompts.ensure_caller_configured", lambda **kwargs: None
+    )
     return CliRunner()
 
 
@@ -175,6 +181,65 @@ def test_refill_grounds_in_graph_on_disk(
     refilled = load_suite(tmp_path / ".wiretap" / "suites" / "clinic.yaml")
     assert len(refilled.scenarios) == 1
     assert "Align with purpose" not in refilled.scenarios[0].success_criteria
+
+
+def test_new_suite_grounds_in_the_agent_from_graph(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A new suite bound with --agent-from reads that agent's graph, not its own."""
+    seen: list[str] = []
+
+    def fake_complete(*, model, messages, temperature=0.4, max_tokens=512):
+        seen.extend(m["content"] for m in messages if m["role"] == "user")
+        return json.dumps(_fake_tests(1, "task"))
+
+    monkeypatch.setattr("wiretap.services.generator.complete", fake_complete)
+
+    src = SuiteConfig(
+        agent=AgentTarget(
+            transport=TransportKind.WEBRTC,
+            platform="retell",
+            agent_id="agent_abc",
+            token_env="RETELL_API_KEY",
+        ),
+        personas=[],
+        scenarios=[],
+    )
+    dump_suite(src, tmp_path / ".wiretap" / "suites" / "clinic.yaml")
+
+    graph = AgentGraph(
+        id="agent_abc",
+        name="Clinic bot",
+        entry_node_id="main",
+        nodes=[
+            GraphNode(
+                id="main",
+                type=NodeType.CONVERSATION,
+                name="main",
+                prompt="You are a dental clinic scheduler. Your job is to book cleanings.",
+            )
+        ],
+        tools=[GraphTool(name="book_appointment", description="Books a slot")],
+    )
+    graphs = tmp_path / ".wiretap" / "graphs"
+    graphs.mkdir(parents=True, exist_ok=True)
+    (graphs / "clinic.graph.json").write_text(graph.model_dump_json(), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["suite", "generate", "-s", "newtests", "-C", "task", "-n", "1", "--agent-from", "clinic"],
+    )
+    assert result.exit_code == 0, result.output
+
+    payload = "\n".join(seen)
+    assert "dental clinic scheduler" in payload
+    assert "book_appointment" in payload
+
+    # The new suite still inherits the bound agent target.
+    out = load_suite(tmp_path / ".wiretap" / "suites" / "newtests.yaml")
+    assert out.agent.platform == "retell"
+    assert out.agent.agent_id == "agent_abc"
+    assert out.agent.token_env == "RETELL_API_KEY"
 
 
 def test_generate_missing_inputs_errors(runner: CliRunner) -> None:

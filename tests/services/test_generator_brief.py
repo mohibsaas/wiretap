@@ -82,14 +82,18 @@ def test_brief_reaches_the_generation_payload(monkeypatch: pytest.MonkeyPatch) -
     assert "end_call_phrases" in system
 
 
-def test_no_brief_sends_an_empty_one(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_brief_says_so_instead_of_sending_a_partial_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     fake = _Recorder([[_test_case("A", "Hi, I need help today.")]])
     monkeypatch.setattr("wiretap.services.generator.complete", fake)
 
     llm_generate_category_tests(category="task", count=1, agent_name="Bot")
 
-    context = json.loads(fake.payloads[0].split("\n", 1)[1])
-    assert context["agent_brief"] == {}
+    payload = fake.payloads[0]
+    brief_block = payload.split("<agent_brief>")[1].split("</agent_brief>")[0]
+    assert "not provided" in brief_block
+    assert "{" not in brief_block
 
 
 def test_stop_word_opening_is_rejected_and_re_requested(
