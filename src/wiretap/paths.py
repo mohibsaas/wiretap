@@ -1,7 +1,14 @@
-"""Local .wiretap/ layout helpers."""
+"""Wiretap data layout — global ``~/.wiretap`` by default.
+
+Precedence for the data root:
+1. Explicit ``cwd`` → ``{cwd}/.wiretap`` (tests / injected isolation)
+2. ``WIRETAP_HOME`` env → that path (absolute data directory)
+3. ``~/.wiretap``
+"""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 ROOT_DIRNAME = ".wiretap"
@@ -11,10 +18,17 @@ EVALUATIONS_DIRNAME = "evaluations"
 # Legacy on-disk name (pre-rename); still read for back-compat
 RUNS_DIRNAME = "runs"
 GRAPHS_DIRNAME = "graphs"
+WIRETAP_HOME_ENV = "WIRETAP_HOME"
 
 
 def wiretap_root(cwd: Path | None = None) -> Path:
-    return (cwd or Path.cwd()) / ROOT_DIRNAME
+    """Return the wiretap data directory (suites, simulations, graphs, …)."""
+    if cwd is not None:
+        return Path(cwd) / ROOT_DIRNAME
+    env = (os.environ.get(WIRETAP_HOME_ENV) or "").strip()
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / ROOT_DIRNAME
 
 
 def suites_dir(cwd: Path | None = None) -> Path:
@@ -73,6 +87,7 @@ __all__ = [
     "RUNS_DIRNAME",
     "SIMULATIONS_DIRNAME",
     "SUITES_DIRNAME",
+    "WIRETAP_HOME_ENV",
     "ensure_layout",
     "evaluations_dir",
     "graphs_dir",

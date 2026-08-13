@@ -20,17 +20,20 @@ def register(app: typer.Typer) -> None:
         suite: str = typer.Option("default", "--suite", "-s"),
     ) -> None:
         """Copy a local suite out of .wiretap/ (for git/CI)."""
-        src = suite_path(suite)
-        if not src.is_file():
-            print(f"[red]Not found:[/red] {src}")
-            raise typer.Exit(1)
-        dest = out
-        if dest.exists() and dest.is_dir():
-            dest = dest / src.name
-        elif dest.suffix not in {".yaml", ".yml"}:
-            dest.mkdir(parents=True, exist_ok=True)
-            dest = dest / src.name
-        else:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
+        from wiretap.cli import style as ui
+
+        with ui.spinner(f"Exporting suite {suite}…"):
+            src = suite_path(suite)
+            if not src.is_file():
+                print(f"[red]Not found:[/red] {src}")
+                raise typer.Exit(1)
+            dest = out
+            if dest.exists() and dest.is_dir():
+                dest = dest / src.name
+            elif dest.suffix not in {".yaml", ".yml"}:
+                dest.mkdir(parents=True, exist_ok=True)
+                dest = dest / src.name
+            else:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
         print(f"[green]Exported[/green] {src} → {dest}")

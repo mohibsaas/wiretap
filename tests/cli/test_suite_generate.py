@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from wiretap.cli.main import app
 from wiretap.models import AgentTarget, SuiteConfig, TransportKind
+from wiretap.paths import WIRETAP_HOME_ENV
 from wiretap.suite import dump_suite, load_suite
 
 
@@ -30,6 +31,11 @@ def _fake_tests(count: int, category: str) -> list[dict]:
 @pytest.fixture()
 def runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     monkeypatch.chdir(tmp_path)
+    # Isolate CLI data under the test dir (global default is ~/.wiretap)
+    monkeypatch.setenv(WIRETAP_HOME_ENV, str(tmp_path / ".wiretap"))
+    monkeypatch.setattr(
+        "wiretap.cli.prompts.ensure_caller_configured", lambda **kwargs: None
+    )
     return CliRunner()
 
 

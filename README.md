@@ -2,7 +2,7 @@
 
 Test your **live** voice agent from the terminal.
 
-Wiretap dials the agent you already run (Vapi, Retell, or a text stub) with its own **test agent**, scores the call with rules + an LLM judge, and stores results under `.wiretap/`.
+Wiretap dials the agent you already run (Vapi, Retell, or a text stub) with its own **test agent**, scores the call with rules + an LLM judge, and stores results under **`~/.wiretap/`** (override with `WIRETAP_HOME`).
 
 ```text
    ┌─────────────┐         dial          ┌──────────────────┐
@@ -23,7 +23,24 @@ Python ≥3.11.
 
 ```bash
 uv sync
-cp .env.example .env   # API keys — never commit .env
+```
+
+**First run (recommended):** interactive setup writes keys to `.env` — same flow as the UI.
+
+```bash
+uv tool install --editable .   # or: source .venv/bin/activate
+wiretap init                   # test agent → optional live agent → suite
+wiretap status                 # what's configured (no secret values)
+```
+
+Or hand-edit secrets:
+
+```bash
+# Default secrets path (created by wiretap init):
+#   ~/.wiretap/.env
+# Optional: also load a project ./ .env for missing keys
+# Override data dir:
+#   export WIRETAP_HOME=/path/to/my-wiretap-data
 ```
 
 Core install includes LiteLLM, PyAI (default speech), LiveKit (Retell), and the local UI server.
@@ -49,6 +66,25 @@ uv sync --extra dev
 
 ## Usage
 
+### Quick start (CLI onboarding)
+
+```bash
+wiretap init
+# 1) pick LLM + STT/TTS and paste keys (saved to .env only)
+# 2) optionally connect Retell/Vapi/…
+# 3) optionally generate a category suite
+
+wiretap simulate -s <suite> --all
+wiretap report
+```
+
+Import still prompts for a missing platform key when run in a TTY:
+
+```bash
+wiretap import retell --agent-id agent_xxx
+# or pass once: --api-key "$RETELL_API_KEY"
+```
+
 ### Known platforms (Vapi / Retell)
 
 Import pulls the live agent config, then **generates category-tagged tests via LLM**
@@ -56,11 +92,7 @@ Import pulls the live agent config, then **generates category-tagged tests via L
 simulator model (LiteLLM). Regenerate anytime with `wiretap suite generate`.
 
 ```bash
-# Vapi
-export VAPI_API_KEY=...
-export OPENAI_API_KEY=...
-export PYAI_API_KEY=...
-
+# After wiretap init (or with keys already in .env)
 uv run wiretap import vapi --assistant-id asst_xxx
 # optional: pick categories
 # uv run wiretap import vapi --assistant-id asst_xxx \
@@ -71,7 +103,6 @@ uv run wiretap simulate --suite vapi --all
 uv run wiretap report
 
 # Retell
-export RETELL_API_KEY=...
 uv run wiretap import retell --agent-id agent_xxx
 uv run wiretap simulate --suite retell --all
 ```
@@ -89,7 +120,7 @@ Same flow in the UI: connect agent → configure test agent → pick categories 
 
 ### Any / custom agent
 
-Hand-write a suite under `.wiretap/suites/<name>.yaml` (or `wiretap export` a suite and edit it). Point `agent:` at how wiretap should reach them:
+Hand-write a suite under `~/.wiretap/suites/<name>.yaml` (or `wiretap export` a suite and edit it). Point `agent:` at how wiretap should reach them:
 
 ```yaml
 agent:
@@ -145,7 +176,7 @@ cd ui && npm install && npm run build && cd ..
 uv run wiretap ui run
 ```
 
-First-run onboarding: **Your Agent** → **Test Agent** (LLM + STT/TTS) → **What To Test**. Same `.wiretap/` data as the CLI. Secrets stay in `.env`; the API only reports whether keys are set.
+First-run onboarding: **Your Agent** → **Test Agent** (LLM + STT/TTS) → **What To Test**. Same `~/.wiretap/` data as the CLI. Secrets stay in `~/.wiretap/.env`; the API only reports whether keys are set.
 
 ---
 
@@ -208,12 +239,12 @@ src/wiretap/
   models.py
   paths.py
 
-.wiretap/        # created in your project cwd
+.wiretap/        # default: ~/.wiretap  (or $WIRETAP_HOME)
   suites/
   simulations/
   graphs/
   onboard.json
-.env             # secrets only
+  .env           # secrets (also created by wiretap init)
 ```
 
 ---
