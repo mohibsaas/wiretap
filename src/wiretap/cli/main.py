@@ -32,6 +32,11 @@ def main(
         help="Show version.",
     ),
 ) -> None:
+    import os
+
+    # Keep first LiteLLM import offline (bundled cost map) so status/init stay snappy.
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
     from wiretap.services.secrets import load_dotenv
 
     load_dotenv()
@@ -44,12 +49,14 @@ def _register() -> None:
     from wiretap.cli import (
         export_cmd,
         import_cmd,
+        init_cmd,
         report_cmd,
         simulate_cmd,
         suite_cmd,
         ui_cmd,
     )
 
+    init_cmd.register(app)
     suite_cmd.register(app)
     simulate_cmd.register(app)
     report_cmd.register(app)

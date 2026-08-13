@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, Callable
 
 from wiretap.importers.suite_builder import slug
 from wiretap.models import (
@@ -23,6 +23,7 @@ from wiretap.models import (
     SuiteConfig,
     TransportKind,
 )
+from wiretap.prompts.agent_brief import agent_brief_from_purpose_only
 from wiretap.prompts.categories import (
     CATEGORY_CATALOG,
     DEFAULT_CATEGORIES,
@@ -43,6 +44,7 @@ from wiretap.prompts.suite_generation import (
 )
 from wiretap.providers.llm import complete
 
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 def list_categories() -> list[dict[str, Any]]:
     out = []
@@ -150,11 +152,16 @@ def llm_generate_category_tests(
     agent_name: str,
     purpose: str = "",
     model: str = "gpt-4o-mini",
+    agent_brief: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Ask the LLM for ``count`` distinct test cases in one category."""
     meta = CATEGORY_CATALOG[category]
     n = max(1, min(MAX_TESTS_PER_CATEGORY, count))
     examples = meta.get("examples") or []
+    brief = agent_brief or agent_brief_from_purpose_only(
+        agent_name=agent_name,
+        purpose=purpose,
+    )
     context = suite_generation_context(
         agent_name=agent_name,
         purpose=purpose,
@@ -163,6 +170,7 @@ def llm_generate_category_tests(
         category_description=str(meta["description"]),
         count=n,
         few_shot_examples=list(examples),
+        agent_brief=brief,
     )
     content = complete(
         model=model,
@@ -219,8 +227,14 @@ def generate_suite(
     tests_per_category: int = 5,
     transport: str = "webrtc",
     model: str | None = None,
+    agent_brief: dict[str, Any] | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> SuiteConfig:
-    """Build a SuiteConfig by LLM-generating scenarios for each category."""
+    """Build a SuiteConfig by LLM-generating scenarios for each category.
+
+    ``on_progress`` receives dict events with ``kind`` in
+    ``start | category_start | category_done | done`` plus ``done``/``total``.
+    """
     cats = parse_categories(categories)
     n = max(1, min(MAX_TESTS_PER_CATEGORY, tests_per_category))
     model_name = (model or "gpt-4o-mini").strip() or "gpt-4o-mini"
@@ -229,14 +243,27 @@ def generate_suite(
     purpose_bit = purpose.strip()
     seen_ids: set[str] = set()
     seen_personas: set[str] = set()
+    total = len(cats) * n
+    done = 0
+
+    def _emit(kind: str, **extra: Any) -> None:
+        if on_progress is None:
+            return
+        payload: dict[str, Any] = {"kind": kind, "done": done, "total": total}
+        payload.update(extra)
+        on_progress(payload)
+
+    _emit("start", categories=list(cats))
 
     for cat in cats:
+        _emit("category_start", category=cat, batch=n)
         tests = llm_generate_category_tests(
             category=cat,
             count=n,
             agent_name=agent_name or "the agent",
             purpose=purpose_bit,
             model=model_name,
+            agent_brief=agent_brief,
         )
         for t in tests:
             pid = _unique_slug(_persona_slug(str(t["identity"])), seen_personas)
@@ -267,6 +294,10 @@ def generate_suite(
                     category=cat,
                 )
             )
+        done += len(tests)
+        _emit("category_done", category=cat, batch=len(tests))
+
+    _emit("done")
 
     plat = (platform or "custom").lower().strip()
     try:
@@ -314,6 +345,8 @@ def fill_suite_scenarios(
     purpose: str = "",
     agent_name: str = "agent",
     model: str | None = None,
+    agent_brief: dict[str, Any] | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> SuiteConfig:
     """Replace personas/scenarios on an existing suite; keep agent / models / speech."""
     generated = generate_suite(
@@ -325,6 +358,8 @@ def fill_suite_scenarios(
         tests_per_category=tests_per_category,
         transport=suite.agent.transport.value,
         model=model or suite.models.simulator,
+        agent_brief=agent_brief,
+        on_progress=on_progress,
     )
     suite.personas = generated.personas
     suite.scenarios = generated.scenarios
@@ -335,6 +370,7 @@ __all__ = [
     "CATEGORY_CATALOG",
     "DEFAULT_CATEGORIES",
     "MAX_TESTS_PER_CATEGORY",
+    "ProgressCallback",
     "fill_suite_scenarios",
     "generate_suite",
     "list_categories",
