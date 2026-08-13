@@ -6,13 +6,18 @@ import json
 from pathlib import Path
 from typing import Any
 
-from wiretap.suite import dump_suite
+from pydantic import ValidationError
+
 from wiretap.importers import (
+    import_bolna_agent,
+    import_elevenlabs_agent,
     import_retell_agent,
+    import_synthflow_agent,
     import_vapi_assistant,
+    suite_for_livekit_agent,
 )
-from wiretap.importers.suite_builder import slug
 from wiretap.importers.agent_graph import AgentGraph
+from wiretap.importers.suite_builder import slug
 from wiretap.models import SuiteConfig
 from wiretap.paths import ensure_layout, graphs_dir, suite_path, wiretap_root
 from wiretap.providers.catalog import (
@@ -23,7 +28,7 @@ from wiretap.providers.catalog import (
 from wiretap.services.generator import generate_suite, list_categories, parse_categories
 from wiretap.services.secrets import key_status, upsert_secrets
 from wiretap.services.suites import get_suite, list_suites
-from pydantic import ValidationError
+from wiretap.suite import dump_suite
 
 
 def onboard_state_path(cwd: Path | None = None) -> Path:
@@ -76,6 +81,11 @@ def onboard_status(cwd: Path | None = None) -> dict[str, Any]:
     has_platform = bool(
         keys.get("RETELL_API_KEY")
         or keys.get("VAPI_API_KEY")
+        or keys.get("ELEVENLABS_API_KEY")
+        or keys.get("LIVEKIT_API_KEY")
+        or keys.get("SYNTHFLOW_API_KEY")
+        or keys.get("BOLNA_API_KEY")
+        or keys.get("BLAND_API_KEY")
         or state.get("platform") == "custom"
     )
     return {
@@ -178,51 +188,58 @@ def configure_caller(
 
 
 
+_LIVE_IMPORT_PLATFORMS = frozenset(
+    {"retell", "vapi", "elevenlabs", "livekit", "synthflow", "bolna", "custom"}
+)
+# Import-only / deferred dial — still allowed for suite drafting
+_DEFERRED_LIVE = frozenset({"bolna", "bland"})
+
+
 async def connect_agent(
     *,
     platform: str,
     agent_id: str | None = None,
     api_key: str | None = None,
+    api_secret: str | None = None,
+    room_url: str | None = None,
     cwd: Path | None = None,
 ) -> dict[str, Any]:
     """Connect THEIR live agent. Caller LLM/STT/TTS is configured via configure_caller."""
     plat = platform.lower().strip()
-    if plat not in {"retell", "vapi", "custom"}:
-        raise ValueError("platform must be retell, vapi, or custom (phone/Bland live dial deferred)")
+    if plat not in _LIVE_IMPORT_PLATFORMS:
+        raise ValueError(
+            "platform must be retell, vapi, elevenlabs, livekit, synthflow, bolna, or custom"
+        )
 
     keys = key_status(cwd)
     state = load_onboard_state(cwd)
-    if not state.get("caller_configured"):
-        # Allow resume if any common LLM key already exists
-        if not (
-            keys.get("PYAI_API_KEY")
-            or keys.get("OPENAI_API_KEY")
-            or keys.get("ANTHROPIC_API_KEY")
-        ):
-            raise ValueError("Configure the test agent (LLM + STT/TTS) first")
-
+    if not state.get("caller_configured") and not (
+        keys.get("PYAI_API_KEY")
+        or keys.get("OPENAI_API_KEY")
+        or keys.get("ANTHROPIC_API_KEY")
+    ):
+        raise ValueError("Configure the test agent (LLM + STT/TTS) first")
 
     if api_key:
         if plat == "custom":
             raise ValueError("custom platform does not use a platform API key here")
         upsert_secrets({f"{plat.upper()}_API_KEY": api_key}, cwd)
         keys = key_status(cwd)
+    if api_secret and plat == "livekit":
+        upsert_secrets({"LIVEKIT_API_SECRET": api_secret}, cwd)
+        keys = key_status(cwd)
 
-    if plat == "retell" and not keys.get("RETELL_API_KEY"):
-        raise ValueError("RETELL_API_KEY required")
-    if plat == "vapi" and not keys.get("VAPI_API_KEY"):
-        raise ValueError("VAPI_API_KEY required")
+    _require_platform_key(plat, keys)
 
     suite: SuiteConfig | None = None
     graph: AgentGraph | None = None
-    # Unique per agent so adding another Retell/Vapi agent does not overwrite.
+    # Unique per agent so adding another agent does not overwrite.
     name = slug(f"{plat}_{agent_id or 'agent'}")[:48] or plat
 
     if plat == "custom":
         if not agent_id:
             agent_id = "custom"
             name = slug("custom") or "custom"
-        # Connect only stores state; generate writes the suite
         agent_name = agent_id
     else:
         if not agent_id:
@@ -231,10 +248,22 @@ async def connect_agent(
             suite, graph = await import_retell_agent(agent_id)
         elif plat == "vapi":
             suite, graph = await import_vapi_assistant(agent_id)
+        elif plat == "elevenlabs":
+            suite, graph = await import_elevenlabs_agent(agent_id)
+        elif plat == "synthflow":
+            suite, graph = await import_synthflow_agent(agent_id)
+        elif plat == "bolna":
+            suite, graph = await import_bolna_agent(agent_id)
+        elif plat == "livekit":
+            url = (room_url or "").strip()
+            if not url:
+                raise ValueError("livekit requires room_url (wss://…)")
+            suite, graph = suite_for_livekit_agent(
+                room_name=agent_id, room_url=url
+            )
         else:
             raise ValueError(f"unsupported platform: {plat}")
         agent_name = suite.personas[0].identity if suite.personas else agent_id
-        # Persist imported baseline suite + graph
         ensure_layout(cwd)
         path = suite_path(name, cwd)
         dump_suite(suite, path)
@@ -249,6 +278,7 @@ async def connect_agent(
             "agent_name": agent_name,
             "suite_name": name,
             "connected": True,
+            "room_url": (room_url or "").strip() or None,
         }
     )
     save_onboard_state(state, cwd)
@@ -258,7 +288,28 @@ async def connect_agent(
         "agent_name": agent_name,
         "suite_name": state.get("suite_name"),
         "imported": plat != "custom",
+        "live_deferred": plat in _DEFERRED_LIVE,
     }
+
+
+def _require_platform_key(plat: str, keys: dict[str, bool]) -> None:
+    if plat == "livekit":
+        if keys.get("LIVEKIT_TOKEN"):
+            return
+        if not keys.get("LIVEKIT_API_KEY"):
+            raise ValueError("LIVEKIT_API_KEY required (or set LIVEKIT_TOKEN)")
+        if not keys.get("LIVEKIT_API_SECRET"):
+            raise ValueError("LIVEKIT_API_SECRET required (or set LIVEKIT_TOKEN)")
+        return
+    required = {
+        "retell": "RETELL_API_KEY",
+        "vapi": "VAPI_API_KEY",
+        "elevenlabs": "ELEVENLABS_API_KEY",
+        "synthflow": "SYNTHFLOW_API_KEY",
+        "bolna": "BOLNA_API_KEY",
+    }.get(plat)
+    if required and not keys.get(required):
+        raise ValueError(f"{required} required")
 
 
 def generate_onboard_suite(

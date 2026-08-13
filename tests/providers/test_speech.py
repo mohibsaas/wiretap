@@ -52,8 +52,10 @@ def test_build_tts_known_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     assert build_tts("deepgram").__class__.__name__ == "DeepgramTTS"
 
 
-def test_deferred_cloud_providers() -> None:
-    with pytest.raises(ValueError, match="cloud"):
+def test_unsupported_cloud_providers() -> None:
+    with pytest.raises(ValueError, match="Unknown STT"):
         build_stt("azure")
-    with pytest.raises(ValueError, match="cloud"):
+    with pytest.raises(ValueError, match="Unknown TTS"):
         build_tts("google")
+    with pytest.raises(ValueError, match="Unknown STT"):
+        build_stt("soniox")

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from typing import Any
 
+from wiretap.agent.events import ProgressHandler, SimEvent, SimPhase, truncate
 from wiretap.agent.orchestrator import build_orchestrator
 from wiretap.eval import check_caller_contract, judge_call, run_rules
 from wiretap.models import (
@@ -21,6 +23,33 @@ from wiretap.suite.audio import CallRecorder, save_call_audio
 from wiretap.transport import build_transport
 
 
+def _emit(
+    on_progress: ProgressHandler | None,
+    *,
+    phase: SimPhase,
+    scenario: Scenario,
+    detail: str = "",
+    turn: int = 0,
+    role: str | None = None,
+    text: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    if on_progress is None:
+        return
+    on_progress(
+        SimEvent(
+            phase=phase,
+            scenario_id=scenario.id,
+            scenario_name=(scenario.name or scenario.id).strip(),
+            detail=detail,
+            turn=turn,
+            role=role,
+            text=text,
+            extra=extra or {},
+        )
+    )
+
+
 async def simulate_scenario(
     suite: SuiteConfig,
     scenario: Scenario,
@@ -28,8 +57,17 @@ async def simulate_scenario(
     suite_id: str = "default",
     batch_id: str = "",
     cwd: Path | None = None,
+    on_progress: ProgressHandler | None = None,
 ) -> SimulationArtifact:
     persona = _persona(suite, scenario.persona_id)
+    platform = suite.agent.platform or "local"
+    _emit(
+        on_progress,
+        phase="connecting",
+        scenario=scenario,
+        detail=f"connecting via {platform}…",
+    )
+
     transport = build_transport(suite.agent)
     recorder = CallRecorder(sample_rate=16_000)
     attach = getattr(transport, "attach_recorder", None)
@@ -62,6 +100,12 @@ async def simulate_scenario(
     baseline = latest_baseline(scenario.id, cwd)
     transcript: list[TurnRecord] = []
     await transport.connect(suite.agent)
+    _emit(
+        on_progress,
+        phase="waiting_agent",
+        scenario=scenario,
+        detail="connected — waiting for agent…",
+    )
 
     try:
         for _ in range(scenario.max_turns):
@@ -71,18 +115,38 @@ async def simulate_scenario(
             if inbound.text:
                 transcript.append(TurnRecord(role="agent", text=inbound.text))
                 orchestrator.observe_agent(inbound.text)
+                _emit(
+                    on_progress,
+                    phase="turn",
+                    scenario=scenario,
+                    turn=len(transcript),
+                    role="agent",
+                    text=inbound.text,
+                    detail=truncate(inbound.text),
+                )
 
             text, hangup = orchestrator.next_utterance()
             if text:
                 transcript.append(orchestrator.as_turn(text))
+                _emit(
+                    on_progress,
+                    phase="turn",
+                    scenario=scenario,
+                    turn=len(transcript),
+                    role="user",
+                    text=text,
+                    detail=truncate(text),
+                )
                 await transport.send_text(text)
             if hangup:
                 break
     finally:
+        _emit(on_progress, phase="hanging_up", scenario=scenario)
         await transport.hangup()
 
     orch_meta = orchestrator.describe()
     simulation_id = uuid.uuid4().hex
+    _emit(on_progress, phase="judging", scenario=scenario, detail="checking rules + judge…")
     audio_rel = save_call_audio(simulation_id, recorder, cwd)
     persona_title = (persona.name or persona.identity or persona.id).strip()
     scenario_title = (scenario.name or scenario.id).strip()
@@ -121,7 +185,15 @@ async def simulate_scenario(
             },
             audio_path=audio_rel,
         )
+        _emit(on_progress, phase="saving", scenario=scenario)
         save_simulation(artifact, cwd)
+        _emit(
+            on_progress,
+            phase="finished",
+            scenario=scenario,
+            detail=artifact.judge.reason,
+            extra={"result": "INCONCLUSIVE", "reason": artifact.judge.reason},
+        )
         return artifact
 
     rules = run_rules(transcript, scenario.rules)
@@ -169,7 +241,18 @@ async def simulate_scenario(
                 "Regressed vs previous passing baseline for this scenario."
             ]
 
+    _emit(on_progress, phase="saving", scenario=scenario)
     save_simulation(artifact, cwd)
+    result = "PASS" if artifact.passed else "FAIL"
+    if artifact.meta.get("inconclusive"):
+        result = "INCONCLUSIVE"
+    _emit(
+        on_progress,
+        phase="finished",
+        scenario=scenario,
+        detail=artifact.judge.reason,
+        extra={"result": result, "reason": artifact.judge.reason},
+    )
     return artifact
 
 

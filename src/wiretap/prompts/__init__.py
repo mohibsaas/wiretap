@@ -1,0 +1,61 @@
+"""Central LLM / suite prompt library.
+
+Edit prompts here — call sites import builders/constants, they do not
+inline prompt text.
+"""
+
+from wiretap.prompts.categories import (
+    CATEGORY_CATALOG,
+    DEFAULT_CATEGORIES,
+    MAX_TESTS_PER_CATEGORY,
+)
+from wiretap.prompts.defaults import (
+    DEFAULT_CALLER_OPENING,
+    DEFAULT_GENERATED_RUBRIC,
+    DEFAULT_PERSONA_PERSONALITY,
+    DEFAULT_SUCCESS_CRITERIA,
+    DO_NOT_REVEAL_TEST_BOT,
+    FLOW_COVERAGE_OPENING,
+    FLOW_COVERAGE_RUBRIC,
+    IMPORTED_PERSONA_PERSONALITY,
+    IMPORTED_SMOKE_RUBRIC,
+)
+from wiretap.prompts.judge import judge_call_prompt
+from wiretap.prompts.suite_generation import (
+    SUITE_GENERATION_SYSTEM,
+    suite_generation_context,
+    suite_generation_retry_user_message,
+    suite_generation_user_message,
+)
+from wiretap.prompts.test_agent import (
+    TEST_AGENT_MAIN_TASK,
+    TEST_AGENT_NEXT_REPLY,
+    agent_said_message,
+    caller_role_message,
+    phase_task_message,
+)
+
+__all__ = [
+    "CATEGORY_CATALOG",
+    "DEFAULT_CALLER_OPENING",
+    "DEFAULT_CATEGORIES",
+    "DEFAULT_GENERATED_RUBRIC",
+    "DEFAULT_PERSONA_PERSONALITY",
+    "DEFAULT_SUCCESS_CRITERIA",
+    "DO_NOT_REVEAL_TEST_BOT",
+    "FLOW_COVERAGE_OPENING",
+    "FLOW_COVERAGE_RUBRIC",
+    "IMPORTED_PERSONA_PERSONALITY",
+    "IMPORTED_SMOKE_RUBRIC",
+    "MAX_TESTS_PER_CATEGORY",
+    "SUITE_GENERATION_SYSTEM",
+    "TEST_AGENT_MAIN_TASK",
+    "TEST_AGENT_NEXT_REPLY",
+    "agent_said_message",
+    "caller_role_message",
+    "judge_call_prompt",
+    "phase_task_message",
+    "suite_generation_context",
+    "suite_generation_retry_user_message",
+    "suite_generation_user_message",
+]

@@ -141,3 +141,123 @@ def register(app: typer.Typer) -> None:
             "[yellow]Note:[/yellow] Bland live phone dial is deferred; "
             "import still drafts suite + AgentGraph IR."
         )
+
+    @import_app.command("elevenlabs")
+    def import_elevenlabs(
+        agent_id: str = typer.Option(..., "--agent-id"),
+        name: str = typer.Option("elevenlabs", "--name"),
+        categories: str = typer.Option(
+            ",".join(DEFAULT_CATEGORIES), "--categories", "-C", help=_CAT_HELP
+        ),
+        tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
+        smoke_only: bool = typer.Option(
+            False, "--smoke-only", help="Skip category tests; keep heuristic smoke suite."
+        ),
+    ) -> None:
+        """Fetch ElevenLabs Conversational AI agent → suite + category tests."""
+        from wiretap.importers import import_elevenlabs_agent
+
+        suite, graph = asyncio.run(import_elevenlabs_agent(agent_id))
+        _maybe_generate(
+            suite,
+            categories=categories,
+            tests_per_category=tests_per_category,
+            smoke_only=smoke_only,
+        )
+        _save_import(name, suite, graph)
+        print(
+            "For live runs: set ELEVENLABS_API_KEY, then "
+            "wiretap simulate --suite elevenlabs --all"
+        )
+
+    @import_app.command("livekit")
+    def import_livekit(
+        room: str = typer.Option(..., "--room", help="LiveKit room name (agent_id)."),
+        room_url: str = typer.Option(
+            ..., "--room-url", help="LiveKit WebSocket URL (wss://…)."
+        ),
+        agent_name: str = typer.Option("", "--agent-name", help="Display name."),
+        name: str = typer.Option("livekit", "--name"),
+        categories: str = typer.Option(
+            ",".join(DEFAULT_CATEGORIES), "--categories", "-C", help=_CAT_HELP
+        ),
+        tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
+        smoke_only: bool = typer.Option(
+            False, "--smoke-only", help="Skip category tests; keep heuristic smoke suite."
+        ),
+    ) -> None:
+        """Build a suite targeting a LiveKit Agents room (no remote HTTP import)."""
+        from wiretap.importers import suite_for_livekit_agent
+
+        suite, graph = suite_for_livekit_agent(
+            room_name=room,
+            room_url=room_url,
+            agent_name=agent_name or None,
+        )
+        _maybe_generate(
+            suite,
+            categories=categories,
+            tests_per_category=tests_per_category,
+            smoke_only=smoke_only,
+        )
+        _save_import(name, suite, graph)
+        print(
+            "For live runs: set LIVEKIT_API_KEY + LIVEKIT_API_SECRET "
+            "(or LIVEKIT_TOKEN), then wiretap simulate --suite livekit --all"
+        )
+
+    @import_app.command("synthflow")
+    def import_synthflow(
+        model_id: str = typer.Option(..., "--model-id", help="Synthflow model / assistant id."),
+        name: str = typer.Option("synthflow", "--name"),
+        categories: str = typer.Option(
+            ",".join(DEFAULT_CATEGORIES), "--categories", "-C", help=_CAT_HELP
+        ),
+        tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
+        smoke_only: bool = typer.Option(
+            False, "--smoke-only", help="Skip category tests; keep heuristic smoke suite."
+        ),
+    ) -> None:
+        """Fetch Synthflow assistant → suite + category tests."""
+        from wiretap.importers import import_synthflow_agent
+
+        suite, graph = asyncio.run(import_synthflow_agent(model_id))
+        _maybe_generate(
+            suite,
+            categories=categories,
+            tests_per_category=tests_per_category,
+            smoke_only=smoke_only,
+        )
+        _save_import(name, suite, graph)
+        print(
+            "For live runs: set SYNTHFLOW_API_KEY plus SYNTHFLOW_FROM_NUMBER / "
+            "SYNTHFLOW_TO_NUMBER (E.164)."
+        )
+
+    @import_app.command("bolna")
+    def import_bolna(
+        agent_id: str = typer.Option(..., "--agent-id"),
+        name: str = typer.Option("bolna", "--name"),
+        categories: str = typer.Option(
+            ",".join(DEFAULT_CATEGORIES), "--categories", "-C", help=_CAT_HELP
+        ),
+        tests_per_category: int = typer.Option(3, "--tests-per-category", "-n", min=1, max=10),
+        smoke_only: bool = typer.Option(
+            False, "--smoke-only", help="Skip category tests; keep heuristic smoke suite."
+        ),
+    ) -> None:
+        """Fetch Bolna agent → suite + category tests."""
+        from wiretap.importers import import_bolna_agent
+
+        suite, graph = asyncio.run(import_bolna_agent(agent_id))
+        _maybe_generate(
+            suite,
+            categories=categories,
+            tests_per_category=tests_per_category,
+            smoke_only=smoke_only,
+        )
+        _save_import(name, suite, graph)
+        print(
+            "[yellow]Note:[/yellow] Bolna live phone dial is deferred; "
+            "import still drafts suite + AgentGraph IR."
+        )

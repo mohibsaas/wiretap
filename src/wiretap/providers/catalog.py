@@ -24,18 +24,13 @@ class ProviderInfo:
     default_model: str | None = None
 
 
-# Curated speech providers (pyai inserted first at runtime).
+# Speech providers that have working adapters in factory.py (pyai first at runtime).
 _SPEECH_STT = (
     "deepgram",
     "assemblyai",
     "openai",
-    "azure",
-    "google",
     "groq",
-    "aws",
     "gladia",
-    "soniox",
-    "speechmatics",
 )
 
 _SPEECH_TTS = (
@@ -43,12 +38,9 @@ _SPEECH_TTS = (
     "elevenlabs",
     "openai",
     "deepgram",
-    "azure",
     "playht",
     "rime",
-    "google",
     "lmnt",
-    "aws_polly",
 )
 
 # Well-known env aliases (otherwise {ID}_API_KEY uppercased).
@@ -57,12 +49,8 @@ _ENV_ALIASES: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "gemini": "GEMINI_API_KEY",
-    "google": "GOOGLE_API_KEY",
     "vertex_ai": "VERTEX_AI_API_KEY",
-    "azure": "AZURE_API_KEY",
     "bedrock": "AWS_ACCESS_KEY_ID",
-    "aws": "AWS_ACCESS_KEY_ID",
-    "aws_polly": "AWS_ACCESS_KEY_ID",
     "groq": "GROQ_API_KEY",
     "deepgram": "DEEPGRAM_API_KEY",
     "elevenlabs": "ELEVENLABS_API_KEY",
@@ -72,8 +60,6 @@ _ENV_ALIASES: dict[str, str] = {
     "rime": "RIME_API_KEY",
     "lmnt": "LMNT_API_KEY",
     "gladia": "GLADIA_API_KEY",
-    "soniox": "SONIOX_API_KEY",
-    "speechmatics": "SPEECHMATICS_API_KEY",
     "together_ai": "TOGETHERAI_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
     "mistral": "MISTRAL_API_KEY",
@@ -114,7 +100,6 @@ _LABEL_OVERRIDES: dict[str, str] = {
     "elevenlabs": "ElevenLabs",
     "cartesia": "Cartesia",
     "assemblyai": "AssemblyAI",
-    "aws_polly": "AWS Polly",
     "together_ai": "Together AI",
     "fireworks_ai": "Fireworks AI",
     "openrouter": "OpenRouter",
@@ -225,6 +210,14 @@ def managed_secret_keys() -> tuple[str, ...]:
         "RETELL_API_KEY",
         "VAPI_API_KEY",
         "BLAND_API_KEY",
+        "SYNTHFLOW_API_KEY",
+        "BOLNA_API_KEY",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "LIVEKIT_TOKEN",
+        "LIVEKIT_URL",
+        "SYNTHFLOW_FROM_NUMBER",
+        "SYNTHFLOW_TO_NUMBER",
         "PLAYHT_USER_ID",
     }
     keys.update(v for v in _ENV_ALIASES.values() if v.endswith("_API_KEY") or v.endswith("_KEY_ID"))

@@ -7,6 +7,7 @@ from typing import Any
 
 from wiretap.eval.transcript import transcript_text
 from wiretap.models import JudgeResult, TurnRecord
+from wiretap.prompts.judge import judge_call_prompt
 from wiretap.providers.llm import complete
 
 
@@ -17,26 +18,11 @@ def judge_call(
     success_criteria: str,
     rubric: str,
 ) -> JudgeResult:
-    prompt = f"""You are an eval judge for a voice-agent test call.
-Success criteria: {success_criteria}
-Rubric:
-{rubric or "(use success criteria)"}
-
-Transcript:
-{transcript_text(turns)}
-
-Respond with JSON only:
-{{
-  "passed": bool,
-  "score": number|null,
-  "reason": string,
-  "suggestions": [string, ...]
-}}
-
-If passed is true, suggestions must be [].
-If passed is false, give 1-5 concrete improvements for the live agent.
-Do not invent secrets or tool IDs.
-"""
+    prompt = judge_call_prompt(
+        success_criteria=success_criteria,
+        rubric=rubric,
+        transcript=transcript_text(turns),
+    )
     raw = complete(
         model=model,
         messages=[{"role": "user", "content": prompt}],

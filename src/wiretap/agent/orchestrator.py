@@ -15,6 +15,13 @@ from typing import Any
 
 from wiretap.agent.beats import beat_for_turn
 from wiretap.models import Beat, Persona, TurnRecord
+from wiretap.prompts.test_agent import (
+    TEST_AGENT_MAIN_TASK,
+    TEST_AGENT_NEXT_REPLY,
+    agent_said_message,
+    caller_role_message,
+    phase_task_message,
+)
 from wiretap.providers.llm import complete
 
 
@@ -42,13 +49,11 @@ def phases_to_nodes(
     phases: list[dict[str, Any]] | None,
 ) -> list[FlowNode]:
     """Build an ordered node list from suite phases (or one default node)."""
-    role = (
-        f"You are a phone caller in a voice-agent test. Stay in character. "
-        f"Short spoken replies only (1-3 sentences). No markdown.\n"
-        f"Identity: {persona.identity}\n"
-        f"Goal: {persona.goal}\n"
-        f"Personality: {persona.personality or 'neutral'}\n"
-        f"Success looks like: {success_criteria}"
+    role = caller_role_message(
+        identity=persona.identity,
+        goal=persona.goal,
+        personality=persona.personality or "neutral",
+        success_criteria=success_criteria,
     )
     if not phases:
         return [
@@ -58,10 +63,7 @@ def phases_to_nodes(
                 task_messages=[
                     {
                         "role": "system",
-                        "content": (
-                            "Produce the next caller utterance. "
-                            "When the goal is fully met, include [[HANGUP]]."
-                        ),
+                        "content": TEST_AGENT_MAIN_TASK,
                     }
                 ],
             )
@@ -72,10 +74,6 @@ def phases_to_nodes(
         node_id = str(phase.get("id") or f"phase_{i}")
         task = phase.get("task") or phase.get("name") or "continue the call"
         is_last = i == len(phases) - 1
-        done_hint = (
-            "When this phase is complete, include [[PHASE_DONE]]. "
-            + ("When the whole call goal is met, include [[HANGUP]]." if is_last else "")
-        )
         out.append(
             FlowNode(
                 id=node_id,
@@ -83,7 +81,9 @@ def phases_to_nodes(
                 task_messages=[
                     {
                         "role": "system",
-                        "content": f"Current phase '{node_id}': {task}\n{done_hint}",
+                        "content": phase_task_message(
+                            node_id=node_id, task=str(task), is_last=is_last
+                        ),
                     }
                 ],
             )
@@ -156,7 +156,7 @@ class TestAgentOrchestrator:
                 )
 
     def observe_agent(self, text: str) -> None:
-        self.history.append({"role": "user", "content": f"Agent said: {text}"})
+        self.history.append({"role": "user", "content": agent_said_message(text)})
 
     def next_utterance(self) -> tuple[str, bool]:
         self._caller_turn += 1
@@ -170,7 +170,7 @@ class TestAgentOrchestrator:
         self.history.append(
             {
                 "role": "user",
-                "content": "Produce your next spoken reply as the caller. Text only.",
+                "content": TEST_AGENT_NEXT_REPLY,
             }
         )
         text = complete(

@@ -16,6 +16,14 @@ from wiretap.models import (
     SuiteConfig,
     TransportKind,
 )
+from wiretap.prompts.defaults import (
+    DEFAULT_CALLER_OPENING,
+    DO_NOT_REVEAL_TEST_BOT,
+    FLOW_COVERAGE_OPENING,
+    FLOW_COVERAGE_RUBRIC,
+    IMPORTED_PERSONA_PERSONALITY,
+    IMPORTED_SMOKE_RUBRIC,
+)
 
 
 def suite_from_prompt(
@@ -34,11 +42,11 @@ def suite_from_prompt(
         name=f"Caller for {agent_name}" if agent_name else "Imported caller",
         identity=f"A customer calling {agent_name or 'the agent'}",
         goal=goal,
-        personality="clear and patient",
-        constraints=["Do not reveal you are a test bot"],
+        personality=IMPORTED_PERSONA_PERSONALITY,
+        constraints=[DO_NOT_REVEAL_TEST_BOT],
     )
     beats: list[Beat] = [
-        Beat(at_turn=1, say=first_message.strip() or "Hi, I need some help today."),
+        Beat(at_turn=1, say=first_message.strip() or DEFAULT_CALLER_OPENING),
     ]
     success = (
         f"Agent handles the call appropriately given its role. "
@@ -51,10 +59,7 @@ def suite_from_prompt(
             persona_id=persona.id,
             max_turns=10,
             success_criteria=success,
-            rubric=(
-                "Pass if the agent stays on-policy and helps toward the caller's goal. "
-                "Fail if it invents facts or ignores clear user intent."
-            ),
+            rubric=IMPORTED_SMOKE_RUBRIC,
             rules=RuleCheck(),
             beats=beats,
         )
@@ -70,8 +75,8 @@ def suite_from_prompt(
                     "Test agent progresses through the agent's main flow; "
                     f"known nodes: {', '.join(graph.node_ids()[:8])}"
                 ),
-                rubric="Pass if the agent advances the conversation without dead-ending.",
-                beats=[Beat(at_turn=1, say="Hi, let's get started.")],
+                rubric=FLOW_COVERAGE_RUBRIC,
+                beats=[Beat(at_turn=1, say=FLOW_COVERAGE_OPENING)],
             )
         )
 
