@@ -3,11 +3,13 @@
 [License: MIT](LICENSE)
 [Python 3.11+](https://www.python.org/downloads/)
 
-Open-source voice agent testing. Free. Dials your live agent. Not a copy.
+**Website:** [wiretap-website.vercel.app](https://wiretap-website.vercel.app/)
 
-You built an AI that talks to customers. You called it a few times. It seemed fine. That is not a real test.
+Wiretap is a CLI-first, local-first voice agent test simulator. It does not rebuild or run your agent locally. Instead, it dials your live deployed voice agent (Retell, Vapi, ElevenLabs, LiveKit, Synthflow, or any phone number via Twilio PSTN) with its own LLM-driven test caller, records the conversation, and scores it with deterministic rules + an LLM judge.
 
-Wiretap calls the agent you already run — Retell, Vapi, ElevenLabs, LiveKit, Synthflow, or a phone number — and acts like a hard caller. Angry. Fast. Confusing. Trying to trick it. Then it scores the call (rules + LLM judge) and stores results under `~/.wiretap/` (override with `WIRETAP_HOME`).
+**Problem:** Teams shipping voice agents have no practical way to regression-test real voice behavior — latency, STT/TTS, turn-taking, tool calls, emotional callers — before production.
+
+**Solution:** Wiretap acts as an automated QA caller + evaluator. Import your agent config → generate categorized test scenarios → run live calls → get pass/fail, transcripts, audio, tool evidence, and improvement advice.
 
 Paid tools charge hundreds a month for this. Hamming is about $500/mo. This is a git clone.
 
