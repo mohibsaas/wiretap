@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { AppSelect } from "@/components/AppSelect";
 import { client, type PstnStatus, type TwilioNumber } from "@/lib/api";
 
 const ACCOUNT_SID = "TWILIO_ACCOUNT_SID";
@@ -227,20 +228,27 @@ export function PhoneTestingCard({ onStatusChange }: Props) {
                   or type an E.164 number below.
                 </p>
               ) : (
-                <select
+                <AppSelect
                   aria-label="Caller number"
-                  className="h-10 w-full rounded-[10px] border border-input bg-card px-3 font-mono text-[13px]"
-                  value={numbers.some((n) => n.phone_number === pick) ? pick : "__custom__"}
-                  onChange={(e) => setPick(e.target.value === "__custom__" ? "" : e.target.value)}
-                >
-                  {numbers.map((n) => (
-                    <option key={n.phone_number} value={n.phone_number}>
-                      {n.phone_number}
-                      {n.friendly_name ? ` · ${n.friendly_name}` : ""}
-                    </option>
-                  ))}
-                  <option value="__custom__">Type a number…</option>
-                </select>
+                  mono
+                  value={
+                    numbers.some((n) => n.phone_number === pick)
+                      ? pick
+                      : "__custom__"
+                  }
+                  onValueChange={(v) =>
+                    setPick(v === "__custom__" ? "" : v)
+                  }
+                  options={[
+                    ...numbers.map((n) => ({
+                      value: n.phone_number,
+                      label:
+                        n.phone_number +
+                        (n.friendly_name ? ` · ${n.friendly_name}` : ""),
+                    })),
+                    { value: "__custom__", label: "Type a number…" },
+                  ]}
+                />
               )}
               {(numbers.length === 0 || !numbers.some((n) => n.phone_number === pick)) && (
                 <Input

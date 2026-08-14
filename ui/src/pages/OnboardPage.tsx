@@ -10,6 +10,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AppSelect } from "@/components/AppSelect";
 import { PhoneTestingCard } from "@/components/PhoneTestingCard";
 
 type Step = 1 | 2 | 3;
@@ -382,11 +383,9 @@ export function OnboardPage() {
             <CardContent className="space-y-4">
               <label className="block space-y-1 text-sm">
                 <span className="text-muted-foreground">Platform</span>
-                <select
-                  className="h-9 w-full rounded-md border border-border bg-card px-3"
+                <AppSelect
                   value={platform}
-                  onChange={(e) => {
-                    const next = e.target.value;
+                  onValueChange={(next) => {
                     setPlatform(next);
                     setApiKey("");
                     setApiSecret("");
@@ -394,15 +393,16 @@ export function OnboardPage() {
                     setAgentId("");
                     void refreshAgents(next);
                   }}
-                >
-                  <option value="retell">Retell</option>
-                  <option value="vapi">Vapi</option>
-                  <option value="elevenlabs">ElevenLabs Agents</option>
-                  <option value="livekit">LiveKit Agents</option>
-                  <option value="synthflow">Synthflow</option>
-                  <option value="bolna">Bolna (import only)</option>
-                  <option value="custom">Custom (text stub)</option>
-                </select>
+                  options={[
+                    { value: "retell", label: "Retell" },
+                    { value: "vapi", label: "Vapi" },
+                    { value: "elevenlabs", label: "ElevenLabs Agents" },
+                    { value: "livekit", label: "LiveKit Agents" },
+                    { value: "synthflow", label: "Synthflow" },
+                    { value: "bolna", label: "Bolna (import only)" },
+                    { value: "custom", label: "Custom (text stub)" },
+                  ]}
+                />
               </label>
               {showRoomUrl ? (
                 <label className="block space-y-1 text-sm">
@@ -462,29 +462,27 @@ export function OnboardPage() {
                           : "Agent"}
                     </span>
                     {remoteAgents && remoteAgents.length > 0 ? (
-                      <select
-                        className="h-9 w-full rounded-md border border-border bg-card px-3"
+                      <AppSelect
                         value={
                           remoteAgents.some((a) => a.id === agentId)
                             ? agentId
                             : "__custom__"
                         }
-                        onChange={(e) => {
-                          const v = e.target.value;
+                        onValueChange={(v) => {
                           if (v === "__custom__") {
                             setAgentId("");
                             return;
                           }
                           setAgentId(v);
                         }}
-                      >
-                        {remoteAgents.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.name}
-                          </option>
-                        ))}
-                        <option value="__custom__">Paste custom id…</option>
-                      </select>
+                        options={[
+                          ...remoteAgents.map((a) => ({
+                            value: a.id,
+                            label: a.name,
+                          })),
+                          { value: "__custom__", label: "Paste custom id…" },
+                        ]}
+                      />
                     ) : null}
                     {(!remoteAgents?.length ||
                       !remoteAgents.some((a) => a.id === agentId)) && (
@@ -542,17 +540,13 @@ export function OnboardPage() {
 
                 <label className="block space-y-1 text-sm">
                   <span className="text-muted-foreground">LLM</span>
-                  <select
-                    className="h-9 w-full rounded-md border border-border bg-card px-3"
+                  <AppSelect
                     value={llmProvider}
-                    onChange={(e) => onLlmChange(e.target.value)}
-                  >
-                    {(catalog?.llm || [{ id: "openai", label: "OpenAI" }]).map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </select>
+                    onValueChange={onLlmChange}
+                    options={(catalog?.llm || [{ id: "openai", label: "OpenAI" }]).map(
+                      (p) => ({ value: p.id, label: p.label }),
+                    )}
+                  />
                 </label>
                 <label className="block space-y-1 text-sm">
                   <span className="text-muted-foreground">{envLabel(llmInfo)}</span>
@@ -574,31 +568,23 @@ export function OnboardPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block space-y-1 text-sm">
                     <span className="text-muted-foreground">STT</span>
-                    <select
-                      className="h-9 w-full rounded-md border border-border bg-card px-3"
+                    <AppSelect
                       value={stt}
-                      onChange={(e) => setStt(e.target.value)}
-                    >
-                      {(catalog?.stt || [{ id: "pyai", label: "PyAI" }]).map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
+                      onValueChange={setStt}
+                      options={(catalog?.stt || [{ id: "pyai", label: "PyAI" }]).map(
+                        (p) => ({ value: p.id, label: p.label }),
+                      )}
+                    />
                   </label>
                   <label className="block space-y-1 text-sm">
                     <span className="text-muted-foreground">TTS</span>
-                    <select
-                      className="h-9 w-full rounded-md border border-border bg-card px-3"
+                    <AppSelect
                       value={tts}
-                      onChange={(e) => onTtsChange(e.target.value)}
-                    >
-                      {(catalog?.tts || [{ id: "pyai", label: "PyAI" }]).map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
+                      onValueChange={onTtsChange}
+                      options={(catalog?.tts || [{ id: "pyai", label: "PyAI" }]).map(
+                        (p) => ({ value: p.id, label: p.label }),
+                      )}
+                    />
                   </label>
                 </div>
 
@@ -654,29 +640,27 @@ export function OnboardPage() {
                         : ""}
                   </span>
                   {voiceChoices.length > 0 ? (
-                    <select
-                      className="h-9 w-full rounded-md border border-border bg-card px-3"
+                    <AppSelect
                       value={
                         voiceChoices.some((v) => v.id === voice)
                           ? voice
                           : "__custom__"
                       }
-                      onChange={(e) => {
-                        const v = e.target.value;
+                      onValueChange={(v) => {
                         if (v === "__custom__") {
                           setVoice("");
                           return;
                         }
                         setVoice(v);
                       }}
-                    >
-                      {voiceChoices.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.label}
-                        </option>
-                      ))}
-                      <option value="__custom__">Custom voice id…</option>
-                    </select>
+                      options={[
+                        ...voiceChoices.map((v) => ({
+                          value: v.id,
+                          label: v.label,
+                        })),
+                        { value: "__custom__", label: "Custom voice id…" },
+                      ]}
+                    />
                   ) : null}
                   {(voiceChoices.length === 0 ||
                     !voiceChoices.some((v) => v.id === voice)) && (
@@ -708,29 +692,25 @@ export function OnboardPage() {
                   <div className="grid gap-3 sm:grid-cols-2 border-t border-border pt-4">
                     <label className="block space-y-1 text-sm">
                       <span className="text-muted-foreground">Test Agent Model</span>
-                      <select
-                        className="h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
+                      <AppSelect
+                        mono
                         value={
                           modelChoices.includes(simulatorModel)
                             ? simulatorModel
                             : "__custom__"
                         }
-                        onChange={(e) => {
-                          const v = e.target.value;
+                        onValueChange={(v) => {
                           if (v === "__custom__") {
                             setSimulatorModel("");
                             return;
                           }
                           setSimulatorModel(v);
                         }}
-                      >
-                        {modelChoices.map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
-                        ))}
-                        <option value="__custom__">Custom model…</option>
-                      </select>
+                        options={[
+                          ...modelChoices.map((m) => ({ value: m, label: m })),
+                          { value: "__custom__", label: "Custom model…" },
+                        ]}
+                      />
                       {!modelChoices.includes(simulatorModel) && (
                         <input
                           className="mt-2 h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
@@ -742,27 +722,25 @@ export function OnboardPage() {
                     </label>
                     <label className="block space-y-1 text-sm">
                       <span className="text-muted-foreground">Judge Model</span>
-                      <select
-                        className="h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"
+                      <AppSelect
+                        mono
                         value={
-                          modelChoices.includes(judgeModel) ? judgeModel : "__custom__"
+                          modelChoices.includes(judgeModel)
+                            ? judgeModel
+                            : "__custom__"
                         }
-                        onChange={(e) => {
-                          const v = e.target.value;
+                        onValueChange={(v) => {
                           if (v === "__custom__") {
                             setJudgeModel("");
                             return;
                           }
                           setJudgeModel(v);
                         }}
-                      >
-                        {modelChoices.map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
-                        ))}
-                        <option value="__custom__">Custom model…</option>
-                      </select>
+                        options={[
+                          ...modelChoices.map((m) => ({ value: m, label: m })),
+                          { value: "__custom__", label: "Custom model…" },
+                        ]}
+                      />
                       {!modelChoices.includes(judgeModel) && (
                         <input
                           className="mt-2 h-9 w-full rounded-md border border-border bg-card px-3 font-mono text-sm"

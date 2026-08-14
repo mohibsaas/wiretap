@@ -460,9 +460,6 @@ export function SimulationDetailPage() {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
 
-  const successCriteria =
-    (sim?.meta?.success_criteria as string | undefined)?.trim() || null;
-
   return (
     <div className="-mx-8 -my-6 flex h-[calc(100dvh-1rem)] min-h-[520px] flex-col overflow-hidden">
       <header className="shrink-0 border-b border-border px-8 pt-2.5 pb-4">
@@ -586,29 +583,14 @@ export function SimulationDetailPage() {
             <Button
               size="sm"
               className="rounded-full"
-              asChild={Boolean(backBatch)}
-              disabled={!backBatch}
-              onClick={
-                backBatch
-                  ? undefined
-                  : () => {
-                      document
-                        .getElementById("sim-verdict")
-                        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                    }
-              }
+              onClick={() => {
+                document
+                  .getElementById("sim-verdict")
+                  ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              }}
             >
-              {backBatch ? (
-                <Link to={`/reports/${encodeURIComponent(backBatch)}`}>
-                  <FileText data-icon="inline-start" />
-                  View report
-                </Link>
-              ) : (
-                <>
-                  <FileText data-icon="inline-start" />
-                  View report
-                </>
-              )}
+              <FileText data-icon="inline-start" />
+              View report
             </Button>
           </div>
         </div>
@@ -671,7 +653,7 @@ export function SimulationDetailPage() {
 
               <div
                 hidden={view !== "transcript"}
-                className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overscroll-contain pr-2 pb-8"
+                className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain pr-2 pb-8"
               >
                 {sim.transcript.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
@@ -687,7 +669,7 @@ export function SimulationDetailPage() {
                     const speaker = isCaller ? callerLabel : agentLabel;
                     const showClock = start != null && end != null;
                     return (
-                      <div key={`${t.role}-${i}`} className="space-y-2">
+                      <div key={`${t.role}-${i}`} className="space-y-2.5">
                         {(tools.byTurn.get(i) ?? []).map((call, n) => (
                           <ToolRow key={`${call.name}-${i}-${n}`} call={call} />
                         ))}
@@ -768,17 +750,46 @@ export function SimulationDetailPage() {
             <aside className="flex min-h-0 w-full max-w-[320px] min-w-[230px] shrink-0 basis-[300px] flex-col gap-3.5 overflow-y-auto overscroll-contain pb-10">
               <div className="min-w-0 shrink-0 rounded-[14px] border border-border bg-card px-5 py-5">
                 <div className="mb-3 text-[11px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase">
-                  Test case
+                  Goal match
                 </div>
-                <TruncatedText
-                  text={title}
-                  className="text-sm font-semibold"
-                />
-                {successCriteria ? (
-                  <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground text-pretty break-words">
-                    {successCriteria}
-                  </p>
-                ) : null}
+                <div className="flex items-end justify-between gap-3">
+                  <div
+                    className={cn(
+                      "font-mono text-[28px] font-semibold leading-none tabular-nums",
+                      verdict?.variant === "pass" && "text-pass",
+                      verdict?.variant === "warn" && "text-warn",
+                      verdict?.variant === "fail" && "text-fail",
+                      !verdict && "text-muted-foreground",
+                    )}
+                  >
+                    {goalPctLabel}
+                  </div>
+                  <span className="pb-0.5 text-[12.5px] font-medium text-muted-foreground">
+                    {verdict?.label === "Inconclusive"
+                      ? "No score"
+                      : verdict?.label ?? "—"}
+                  </span>
+                </div>
+                <div className="mt-4 space-y-1.5 text-[11.5px] leading-snug text-muted-foreground">
+                  <div className="flex justify-between gap-2">
+                    <span>Fail</span>
+                    <span className="font-mono tabular-nums">
+                      &lt; {Math.round(failBelow * 100)}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span>Partial</span>
+                    <span className="font-mono tabular-nums">
+                      {Math.round(failBelow * 100)}–{Math.round(passAt * 100) - 1}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span>Pass</span>
+                    <span className="font-mono tabular-nums">
+                      ≥ {Math.round(passAt * 100)}%
+                    </span>
+                  </div>
+                </div>
               </div>
 
               <div
@@ -832,51 +843,6 @@ export function SimulationDetailPage() {
                   </button>
                 )}
               </div>
-
-              <div className="min-w-0 shrink-0 rounded-[14px] border border-border bg-card px-5 py-5">
-                <div className="mb-3 text-[11px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase">
-                  Goal match
-                </div>
-                <div className="flex items-end justify-between gap-3">
-                  <div
-                    className={cn(
-                      "font-mono text-[28px] font-semibold leading-none tabular-nums",
-                      verdict?.variant === "pass" && "text-pass",
-                      verdict?.variant === "warn" && "text-warn",
-                      verdict?.variant === "fail" && "text-fail",
-                      !verdict && "text-muted-foreground",
-                    )}
-                  >
-                    {goalPctLabel}
-                  </div>
-                  <span className="pb-0.5 text-[12.5px] font-medium text-muted-foreground">
-                    {verdict?.label === "Inconclusive"
-                      ? "No score"
-                      : verdict?.label ?? "—"}
-                  </span>
-                </div>
-                <div className="mt-4 space-y-1.5 text-[11.5px] leading-snug text-muted-foreground">
-                  <div className="flex justify-between gap-2">
-                    <span>Fail</span>
-                    <span className="font-mono tabular-nums">
-                      &lt; {Math.round(failBelow * 100)}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span>Partial</span>
-                    <span className="font-mono tabular-nums">
-                      {Math.round(failBelow * 100)}–{Math.round(passAt * 100) - 1}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span>Pass</span>
-                    <span className="font-mono tabular-nums">
-                      ≥ {Math.round(passAt * 100)}%
-                    </span>
-                  </div>
-                </div>
-              </div>
-
             </aside>
           </div>
         </div>

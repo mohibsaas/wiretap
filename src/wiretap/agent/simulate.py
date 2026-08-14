@@ -279,7 +279,6 @@ async def simulate_scenario(
                 "agent_id": suite.agent.agent_id,
                 "platform": suite.agent.platform,
                 "playback_turns": _playback_turns(live_transcript),
-                **({"category": scenario.category} if scenario.category else {}),
             },
             audio_path=audio_rel,
         )
@@ -345,8 +344,6 @@ async def simulate_scenario(
         ),
         "playback_turns": _playback_turns(live_transcript),
     }
-    if scenario.category:
-        meta["category"] = scenario.category
     if inconclusive:
         meta["inconclusive"] = True
     if rules.errors:
