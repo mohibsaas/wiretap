@@ -124,6 +124,8 @@ class JudgeConfig(BaseModel):
 
 
 class SuiteConfig(BaseModel):
+    # Human display name in UI/CLI; file stem remains the stable id.
+    title: str = ""
     agent: AgentTarget = Field(default_factory=AgentTarget)
     models: ModelSlots = Field(default_factory=ModelSlots)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)

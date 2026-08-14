@@ -1,7 +1,10 @@
 import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
+import { OnboardDialog } from "@/components/OnboardDialog";
 import { PageHeader } from "@/components/PageHeader";
+import { client } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const DANGER = "var(--wt-danger)";
@@ -112,7 +115,7 @@ const CAT_TILES: Record<string, [string, string]> = {
   Operational: ["#E6F0F7", "#2F6B9E"],
   Factual: ["#EFF3E6", "#5C7A2E"],
   Compliance: ["#F7F0E6", "#8A5B12"],
-  Task: ["#E6EEE7", "#056938"],
+  Task: ["#E6EEE7", "#0A9551"],
 };
 
 const CATEGORIES = [
@@ -265,8 +268,66 @@ function FleetChart() {
 }
 
 export function DashboardPage() {
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const again = params.get("again") === "1";
+  const [needsOnboard, setNeedsOnboard] = useState(false);
+  const [statusReady, setStatusReady] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [addAgentMode, setAddAgentMode] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void client
+      .onboardStatus()
+      .then((s) => {
+        if (cancelled) return;
+        setNeedsOnboard(s.needs_onboarding);
+        if (again) {
+          setAddAgentMode(true);
+          setWizardOpen(true);
+        } else if (s.needs_onboarding) {
+          setAddAgentMode(false);
+          setWizardOpen(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setNeedsOnboard(false);
+      })
+      .finally(() => {
+        if (!cancelled) setStatusReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [again]);
+
+  function clearAgainParam() {
+    if (!again) return;
+    const next = new URLSearchParams(params);
+    next.delete("again");
+    setParams(next, { replace: true });
+  }
+
   return (
     <div className="flex flex-col pb-12">
+      <OnboardDialog
+        open={wizardOpen && statusReady}
+        required={needsOnboard && !addAgentMode}
+        addAgentMode={addAgentMode}
+        onOpenChange={(open) => {
+          setWizardOpen(open);
+          if (!open) clearAgainParam();
+        }}
+        onFinished={({ suiteName }) => {
+          setNeedsOnboard(false);
+          clearAgainParam();
+          if (suiteName) {
+            navigate(`/suites/${encodeURIComponent(suiteName)}`);
+          }
+        }}
+      />
+
       <PageHeader
         className="mb-6"
         title="Dashboard"

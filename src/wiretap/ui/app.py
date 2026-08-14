@@ -26,7 +26,12 @@ from wiretap.services.onboard import (
 from wiretap.services.secrets import key_status, load_dotenv, upsert_secrets
 from wiretap.services.simulations import get_simulation_detail, list_simulations
 from wiretap.services.suites import (
+    AddSuiteCaseBody,
+    CreateSuiteBody,
     UpdateSuiteBody,
+    add_suite_case,
+    create_blank_suite,
+    delete_suite,
     get_suite,
     list_suites,
     suite_public_dict,
@@ -62,6 +67,15 @@ class SecretsBody(BaseModel):
 
 class FromNumberBody(BaseModel):
     from_number: str
+
+
+class PromptFindingsBody(BaseModel):
+    finding_ids: list[str] = Field(default_factory=list)
+
+
+class PromptApplyBody(BaseModel):
+    finding_ids: list[str] = Field(default_factory=list)
+    current_hash: str
 
 
 class ConnectBody(BaseModel):
@@ -310,6 +324,23 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
     def api_list_suites() -> list[dict[str, Any]]:
         return list_suites(cwd)
 
+    @app.post("/api/suites")
+    def api_create_suite(body: CreateSuiteBody) -> dict[str, Any]:
+        """Create a blank suite; cases are added later on the detail page."""
+        try:
+            suite = create_blank_suite(
+                name=body.name,
+                title=body.title,
+                agent_from=body.agent_from,
+                cwd=cwd,
+            )
+            stem = validate_suite_name(body.name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except ValidationError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return suite_public_dict(suite, name=stem)
+
     @app.get("/api/suites/{name}")
     def api_get_suite(name: str) -> dict[str, Any]:
         try:
@@ -323,7 +354,7 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
 
     @app.put("/api/suites/{name}")
     def api_update_suite(name: str, body: UpdateSuiteBody) -> dict[str, Any]:
-        """Update editable test-case rows (persona + scenario fields) in suite YAML."""
+        """Update suite title and/or editable test-case rows in suite YAML."""
         try:
             stem = validate_suite_name(name)
             suite = update_suite_cases(stem, body, cwd)
@@ -334,6 +365,30 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
         except ValidationError as exc:
             raise HTTPException(400, str(exc)) from exc
         return suite_public_dict(suite, name=stem)
+
+    @app.post("/api/suites/{name}/cases")
+    def api_add_suite_case(name: str, body: AddSuiteCaseBody) -> dict[str, Any]:
+        """Append one test case (persona + scenario) to a suite."""
+        try:
+            stem = validate_suite_name(name)
+            suite = add_suite_case(stem, body, cwd)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValidationError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return suite_public_dict(suite, name=stem)
+
+    @app.delete("/api/suites/{name}")
+    def api_delete_suite(name: str) -> dict[str, Any]:
+        """Delete a suite YAML and its companion agent graph, if any."""
+        try:
+            return delete_suite(name, cwd)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @app.post("/api/batches")
     async def api_start_batch(body: StartBatchBody) -> dict[str, str]:
@@ -396,10 +451,81 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
 
     @app.get("/api/evaluations/{batch_id}")
     def api_get_evaluation(batch_id: str) -> dict[str, Any]:
+        live = get_batch(batch_id)
         detail = evaluation_run_detail(batch_id, cwd)
-        if not detail:
+        if not detail and live is None:
             raise HTTPException(404, "evaluation not found")
+        if not detail:
+            detail = {
+                "batch_id": live.batch_id,
+                "suite_id": live.suite,
+                "status": live.status,
+                "scenario_ids": live.scenario_ids,
+                "simulations": [a.model_dump(mode="json") for a in live.results],
+            }
+        if live is not None and live.advice is not None:
+            detail["advice"] = live.advice.model_dump(mode="json")
         return detail
+
+    @app.post("/api/evaluations/{batch_id}/prompt-preview")
+    async def api_prompt_preview(
+        batch_id: str, body: PromptFindingsBody
+    ) -> dict[str, Any]:
+        return await _prompt_action(batch_id, body.finding_ids)
+
+    @app.post("/api/evaluations/{batch_id}/prompt-apply")
+    async def api_prompt_apply(batch_id: str, body: PromptApplyBody) -> dict[str, Any]:
+        return await _prompt_action(
+            batch_id, body.finding_ids, current_hash=body.current_hash, write=True
+        )
+
+    async def _prompt_action(
+        batch_id: str,
+        finding_ids: list[str],
+        *,
+        current_hash: str = "",
+        write: bool = False,
+    ) -> dict[str, Any]:
+        from wiretap.paths import suite_path
+        from wiretap.services.prompt_apply import (
+            PromptApplyError,
+            advice_from_run,
+            apply_prompt,
+            preview_prompt,
+        )
+        from wiretap.suite import load_suite
+
+        live = get_batch(batch_id)
+        detail = evaluation_run_detail(batch_id, cwd) or {}
+        if live is not None and live.advice is not None:
+            advice = live.advice
+            suite_id = live.suite
+        else:
+            advice = advice_from_run(detail)
+            suite_id = str(detail.get("suite_id") or "")
+        if advice is None:
+            raise HTTPException(404, "no improvements for this run")
+        if not suite_id:
+            raise HTTPException(400, "evaluation has no suite")
+        try:
+            cfg = load_suite(suite_path(suite_id, cwd))
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        try:
+            if write:
+                return await apply_prompt(
+                    cfg,
+                    advice,
+                    finding_ids,
+                    current_hash=current_hash,
+                    cwd=cwd,
+                    suite_id=suite_id,
+                )
+            return await preview_prompt(cfg, advice, finding_ids)
+        except PromptApplyError as exc:
+            raise HTTPException(
+                exc.status, {"detail": str(exc), "code": exc.code}
+            ) from exc
 
     @app.get("/api/simulations")
     def api_list_simulations(limit: int = 50) -> list[dict[str, Any]]:

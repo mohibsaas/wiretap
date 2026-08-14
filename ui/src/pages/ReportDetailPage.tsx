@@ -9,6 +9,11 @@ import {
   Share2,
   X,
 } from "lucide-react";
+import {
+  ApplyPromptDialog,
+  promptFindingIdsForScenario,
+  usePromptApply,
+} from "@/components/ApplyPromptDialog";
 import { NewRunDialog } from "@/components/NewRunDialog";
 import {
   ReportBadgePlate,
@@ -33,7 +38,6 @@ import {
   badgePackSvg,
   buildReport,
   categoryLabel,
-  downloadJson,
   downloadText,
   indexSuiteScenarios,
   resolveAgentName,
@@ -60,10 +64,17 @@ export function ReportDetailPage() {
   const [badgeId, setBadgeId] = useState<string | null>(null);
   const [rerunOpen, setRerunOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [appliedFixes, setAppliedFixes] = useState<Set<string>>(() => new Set());
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [pendingFixId, setPendingFixId] = useState<string | null>(null);
+  const apply = usePromptApply(batchId);
 
   useEffect(() => {
     let alive = true;
     setError(null);
+    setAppliedFixes(new Set());
+    setApplyOpen(false);
+    setPendingFixId(null);
     void client
       .evaluation(batchId)
       .then((detail) => {
@@ -124,9 +135,14 @@ export function ReportDetailPage() {
     }
   }
 
-  function exportRun() {
-    if (!run) return;
-    downloadJson(`wiretap-report-${reportHashSafe(run.batch_id)}.json`, run);
+  async function exportRun() {
+    if (!report) return;
+    try {
+      const { downloadReportPdf } = await import("@/lib/reportPdf");
+      downloadReportPdf(report);
+    } catch {
+      setError("Could not export the report PDF.");
+    }
   }
 
   function downloadBadges() {
@@ -188,7 +204,7 @@ export function ReportDetailPage() {
             variant="outline"
             size="sm"
             className="rounded-full"
-            onClick={exportRun}
+            onClick={() => void exportRun()}
           >
             <Download data-icon="inline-start" />
             Export
@@ -433,17 +449,18 @@ export function ReportDetailPage() {
         </div>
 
         <div className="overflow-hidden rounded-2xl border border-border bg-card">
-          <div className="grid grid-cols-[minmax(0,1.45fr)_minmax(88px,0.7fr)_minmax(0,1.55fr)_minmax(76px,0.5fr)_minmax(0,1.55fr)] gap-3.5 border-b border-border bg-[var(--wt-section)] px-[18px] py-[13px]">
-            {["Test", "Category", "Expected outcome", "Result", "Suggested fix"].map(
-              (h) => (
-                <div
-                  key={h}
-                  className="text-[10.5px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase"
-                >
-                  {h}
-                </div>
-              ),
-            )}
+          <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,1.7fr)_84px_minmax(0,1.6fr)_108px] gap-3.5 border-b border-border bg-[var(--wt-section)] px-[18px] py-[13px]">
+            {["Test", "Expected outcome", "Result", "Suggested fix"].map((h) => (
+              <div
+                key={h}
+                className="text-[10.5px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase"
+              >
+                {h}
+              </div>
+            ))}
+            <div className="text-right text-[10.5px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase">
+              Action
+            </div>
           </div>
           {shownRows.length === 0 && (
             <div className="px-[18px] py-10 text-center text-[13px] text-muted-foreground">
@@ -456,12 +473,26 @@ export function ReportDetailPage() {
             const sim = row.simulation;
             const to = `/evaluations/${encodeURIComponent(report.batchId)}/scenarios/${encodeURIComponent(sim.simulation_id)}`;
             const pass = !row.flagged;
+            const applied = appliedFixes.has(sim.simulation_id);
+            const findingIds = promptFindingIdsForScenario(
+              run?.advice?.findings,
+              sim.scenario_id,
+            );
+            const canApply = !pass && !applied && findingIds.length > 0;
             return (
-              <Link
+              <div
                 key={sim.simulation_id}
-                to={to}
+                role="link"
+                tabIndex={0}
+                onClick={() => navigate(to)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    navigate(to);
+                  }
+                }}
                 className={cn(
-                  "grid grid-cols-[minmax(0,1.45fr)_minmax(88px,0.7fr)_minmax(0,1.55fr)_minmax(76px,0.5fr)_minmax(0,1.55fr)] items-start gap-3.5 px-[18px] py-3.5 transition-colors hover:bg-[var(--wt-section)]",
+                  "grid cursor-pointer grid-cols-[minmax(0,1.5fr)_minmax(0,1.7fr)_84px_minmax(0,1.6fr)_108px] items-start gap-3.5 px-[18px] py-3.5 transition-colors hover:bg-[var(--wt-section)]",
                   i > 0 && "border-t border-border",
                 )}
               >
@@ -469,30 +500,27 @@ export function ReportDetailPage() {
                   <div className="text-[13.5px] font-medium leading-snug text-pretty">
                     {sim.scenario_name || sim.scenario_id}
                   </div>
-                  <div className="mt-1 font-mono text-[11px] text-[var(--wt-text-muted)]">
-                    {sim.simulation_id.slice(0, 12)}
+                  <div className="mt-[7px] flex min-w-0 items-center gap-2">
+                    <span className="inline-block max-w-full truncate rounded-full border border-border bg-[var(--wt-section)] px-[9px] py-[3px] text-[11.5px] leading-snug text-muted-foreground">
+                      {row.categoryLabel}
+                    </span>
+                    <span className="font-mono text-[11px] text-[var(--wt-text-muted)]">
+                      {sim.simulation_id.slice(0, 12)}
+                    </span>
                   </div>
-                </div>
-                <div>
-                  <span className="inline-block max-w-full truncate rounded-full border border-border bg-[var(--wt-section)] px-[9px] py-[3px] text-[11.5px] leading-snug text-muted-foreground">
-                    {row.categoryLabel}
-                  </span>
                 </div>
                 <div className="text-[12.5px] leading-relaxed text-muted-foreground text-pretty">
                   {row.expected}
                 </div>
-                <div className="flex flex-col items-start gap-1.5">
+                <div>
                   <span
                     className={cn(
-                      "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11.5px] font-semibold",
+                      "inline-flex min-w-11 items-center justify-center rounded-full border px-2.5 py-[3px] font-mono text-[12.5px] font-semibold",
                       pass
                         ? "border-primary bg-[var(--wt-green-100)] text-[var(--wt-green-700)]"
-                        : "border-[var(--wt-danger)] bg-card text-[var(--wt-danger)]",
+                        : "border-[var(--wt-danger)] bg-[var(--wt-danger-surface)] text-[var(--wt-danger)]",
                     )}
                   >
-                    {pass ? "Pass" : "Fail"}
-                  </span>
-                  <span className="font-mono text-[11.5px] text-[var(--wt-text-muted)]">
                     {row.score == null ? "—" : row.score}
                   </span>
                 </div>
@@ -506,11 +534,60 @@ export function ReportDetailPage() {
                 >
                   {row.fix || "—"}
                 </div>
-              </Link>
+                <div className="flex justify-end">
+                  {canApply ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-auto rounded-full px-3.5 py-1.5 text-xs font-semibold"
+                      disabled={apply.busy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPendingFixId(sim.simulation_id);
+                        setApplyOpen(true);
+                        void apply.openPreview(findingIds);
+                      }}
+                    >
+                      Apply fix
+                    </Button>
+                  ) : applied ? (
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[11.5px] font-semibold text-[var(--wt-green-700)]">
+                      <Check className="size-3" />
+                      Applied
+                    </span>
+                  ) : null}
+                </div>
+              </div>
             );
           })}
         </div>
       </div>
+
+      <ApplyPromptDialog
+        open={applyOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            apply.close();
+            setApplyOpen(false);
+            setPendingFixId(null);
+          }
+        }}
+        preview={apply.preview}
+        busy={apply.busy}
+        error={apply.error}
+        onConfirm={() => {
+          void (async () => {
+            if (!(await apply.confirmApply()) || !pendingFixId) return;
+            setAppliedFixes((prev) => {
+              const next = new Set(prev);
+              next.add(pendingFixId);
+              return next;
+            });
+            setApplyOpen(false);
+            setPendingFixId(null);
+          })();
+        }}
+      />
 
       <BadgeModal
         open={!!badgeId}
@@ -554,10 +631,6 @@ function BackLink() {
       Reports
     </Link>
   );
-}
-
-function reportHashSafe(batchId: string): string {
-  return batchId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) || "report";
 }
 
 function BadgeModal({
