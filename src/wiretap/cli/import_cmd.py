@@ -118,17 +118,17 @@ def _resolve_remote_agent_id(
 
 def _save_import(suite_name: str, suite, graph) -> None:
     from wiretap.cli import style as ui
-    from wiretap.services.suites import save_suite_import
+    from wiretap.paths import ensure_layout, graphs_dir, suite_path
+    from wiretap.suite import dump_suite
 
-    try:
-        saved = save_suite_import(suite_name, suite, graph)
-    except ValueError:
-        ui.err(f"Invalid suite name: {suite_name!r}")
-        raise typer.Exit(1) from None
-
-    ui.ok(f"Wrote suite [{ui.ACCENT}]{saved['suite_path']}[/{ui.ACCENT}]")
-    ui.muted(f"AgentGraph IR → {saved['graph_path']}")
-    ui.print_suite_view(suite, name=saved["name"], path=saved["suite_path"])
+    ensure_layout()
+    path = suite_path(suite_name)
+    dump_suite(suite, path)
+    ir_path = graphs_dir() / f"{suite_name}.graph.json"
+    ir_path.write_text(graph.model_dump_json(indent=2), encoding="utf-8")
+    ui.ok(f"Wrote suite [{ui.ACCENT}]{path}[/{ui.ACCENT}]")
+    ui.muted(f"AgentGraph IR → {ir_path}")
+    ui.print_suite_view(suite, name=suite_name, path=str(path))
 
 
 def _maybe_generate(

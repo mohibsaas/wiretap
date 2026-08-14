@@ -126,6 +126,11 @@ def register(app: typer.Typer) -> None:
         from wiretap.suite import load_suite
         from wiretap.suite.agent_override import with_agent_override
         from wiretap.suite.evaluations import save_evaluation_run
+        from wiretap.suite.run_progress import (
+            finish_run_progress,
+            start_run_progress,
+            touch_scenario,
+        )
 
         # Test agent (LLM/STT/TTS) before dialing
         ensure_caller_configured()
@@ -221,15 +226,29 @@ def register(app: typer.Typer) -> None:
             print(f"[cyan]Suite[/cyan] {path}  [cyan]agent[/cyan] {target}")
             print(f"[cyan]Evaluation[/cyan] {batch_id}  [cyan]concurrency[/cyan] {conc}")
 
+        # Shared disk progress so the local UI stays in sync with CLI runs.
+        start_run_progress(
+            batch_id=batch_id,
+            suite_id=suite_id,
+            scenarios=[(sc.id, sc.name or sc.id) for sc in selected],
+            concurrency=conc,
+        )
+
         def on_progress(event: SimEvent) -> None:
             if display is not None:
                 display.on_event(event)
+            touch_scenario(
+                batch_id,
+                scenario_id=event.scenario_id,
+                phase=event.phase,
+                detail=event.detail,
+                turn=event.turn,
+                scenario_name=event.scenario_name or None,
+            )
 
         async def _simulate_all():
             sem = asyncio.Semaphore(conc)
             results = []
-            advice_lock = asyncio.Lock()
-            latest: dict[str, object] = {"advice": None}
 
             async def one(sc):
                 title = sc.name or sc.id
@@ -254,6 +273,7 @@ def register(app: typer.Typer) -> None:
                             ),
                             timeout=timeout,
                         )
+                        return art
                     except TimeoutError:
                         on_progress(
                             SimEvent(
@@ -284,38 +304,26 @@ def register(app: typer.Typer) -> None:
                             )
                         )
                         return None
-                    if art is None:
-                        return None
-                    async with advice_lock:
-                        results.append(art)
-                        if not no_advice:
-                            from wiretap.eval.advisor import needs_attention
 
-                            if needs_attention(art):
-                                try:
-                                    latest["advice"] = await advise_for_run(
-                                        cfg, list(results), suite_id=suite_id
-                                    )
-                                except Exception:  # noqa: BLE001, S110 — advice never changes the outcome
-                                    pass
-                    return art
+            gathered = await asyncio.gather(*[one(sc) for sc in selected])
+            for item in gathered:
+                if item is not None:
+                    results.append(item)
+            return results
 
-            await asyncio.gather(*[one(sc) for sc in selected])
-            return results, latest.get("advice")
-
-        artifacts: list = []
-        advice = None
         if display is not None:
             try:
                 with display:
-                    artifacts, advice = asyncio.run(_simulate_all())
+                    artifacts = asyncio.run(_simulate_all())
             except KeyboardInterrupt:
+                finish_run_progress(batch_id, status="failed")
                 print("\n[yellow]Interrupted — disconnecting LiveKit sessions…[/yellow]")
                 raise SystemExit(130) from None
         else:
             try:
-                artifacts, advice = asyncio.run(_simulate_all())
+                artifacts = asyncio.run(_simulate_all())
             except KeyboardInterrupt:
+                finish_run_progress(batch_id, status="failed")
                 print("\nInterrupted — disconnecting…")
                 raise SystemExit(130) from None
 
@@ -348,9 +356,8 @@ def register(app: typer.Typer) -> None:
             incon_arts = [a for a in artifacts if a.meta.get("inconclusive")]
             if detail_arts or incon_arts:
                 console.print()
-                from rich.text import Text as RichText
-
                 from wiretap.cli.style import ACCENT, MUTED
+                from rich.text import Text as RichText
 
                 n_partial = sum(
                     1
@@ -381,6 +388,13 @@ def register(app: typer.Typer) -> None:
                     failures += 1
                 print_fail_details(art, console=console)
 
+        advice = None
+        if artifacts and not no_advice:
+            try:
+                advice = asyncio.run(advise_for_run(cfg, artifacts, suite_id=suite_id))
+            except Exception:  # noqa: BLE001 — advice never changes the outcome
+                advice = None
+
         passed = sum(
             1 for a in artifacts if a.passed and not a.meta.get("inconclusive")
         )
@@ -407,6 +421,7 @@ def register(app: typer.Typer) -> None:
                 "advice": advice.model_dump(mode="json") if advice else None,
             }
         )
+        finish_run_progress(batch_id, status="completed")
 
         if advice:
             print_run_advice(advice, console=console)

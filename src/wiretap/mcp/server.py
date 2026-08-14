@@ -1,67 +1,73 @@
-"""MCP server — expose wiretap tools to coding agents.
-
-Registration only; the tool bodies live in ``wiretap.mcp.tools`` so they can be
-tested without the optional ``mcp`` dependency installed.
-"""
+"""MCP server — expose wiretap tools to coding agents."""
 
 from __future__ import annotations
 
-import inspect
-from typing import Any
-
-_INSTALL_HINT = "MCP extra not installed. Install with: uv sync --extra mcp"
-
-
-def _package_version() -> str:
-    from importlib.metadata import PackageNotFoundError, version
-
-    try:
-        return version("wiretap")
-    except PackageNotFoundError:
-        return "0.0.0"
-
-
-def _server_class() -> Any:
-    """Return the server class for whichever MCP major version is installed.
-
-    2.x renamed ``mcp.server.fastmcp.FastMCP`` to ``mcp.server.mcpserver.MCPServer``;
-    both expose the ``add_tool`` / ``run`` surface used here.
-    """
-    try:
-        from mcp.server.mcpserver import MCPServer
-
-        return MCPServer
-    except ImportError:
-        pass
-    try:
-        from mcp.server.fastmcp import FastMCP
-
-        return FastMCP
-    except ImportError as exc:
-        raise SystemExit(_INSTALL_HINT) from exc
-
-
-def build_server() -> Any:
-    """Create the MCP server with every wiretap tool registered."""
-    from wiretap.mcp.tools import TOOLS
-
-    cls = _server_class()
-    kwargs: dict[str, Any] = {}
-    # 2.x MCPServer reports a version in the initialize handshake; 1.x
-    # FastMCP has no such parameter.
-    if "version" in inspect.signature(cls.__init__).parameters:
-        kwargs["version"] = _package_version()
-    server = cls("wiretap", **kwargs)
-    for fn in TOOLS:
-        server.add_tool(fn)
-    return server
+import asyncio
+import json
+from pathlib import Path
 
 
 def main() -> None:
-    from wiretap.services.secrets import load_dotenv
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except ImportError as exc:
+        raise SystemExit(
+            "MCP extra not installed. Install with: uv sync --extra mcp"
+        ) from exc
 
-    load_dotenv()
-    build_server().run()
+    from wiretap.suite import load_suite
+    from wiretap.importers import import_vapi_assistant
+    from wiretap.paths import suite_path, suites_dir
+    from wiretap.agent import simulate_scenario
+    from wiretap.suite import iter_simulations
+
+    mcp = FastMCP("wiretap")
+
+    @mcp.tool()
+    def list_suites() -> str:
+        """List local suite names under .wiretap/suites/."""
+        d = suites_dir()
+        if not d.is_dir():
+            return "[]"
+        names = sorted(p.stem for p in d.glob("*.yaml")) + sorted(
+            p.stem for p in d.glob("*.yml")
+        )
+        return json.dumps(names)
+
+    @mcp.tool()
+    def simulate_suite(suite: str = "default", scenario: str | None = None) -> str:
+        """Simulate a suite (or one scenario) and return JSON results."""
+
+        async def _simulate():
+            cfg = load_suite(suite_path(suite))
+            selected = cfg.scenarios
+            if scenario:
+                selected = [s for s in cfg.scenarios if s.id == scenario]
+            arts = []
+            for sc in selected:
+                arts.append(
+                    await simulate_scenario(cfg, sc, suite_id=Path(suite).stem)
+                )
+            return [a.model_dump(mode="json") for a in arts]
+
+        return json.dumps(asyncio.run(_simulate()), indent=2)
+
+    @mcp.tool()
+    def latest_simulations(limit: int = 10) -> str:
+        """Return recent simulation artifacts as JSON."""
+        sims = iter_simulations(limit=limit)
+        return json.dumps([r.model_dump(mode="json") for r in sims], indent=2)
+
+    @mcp.tool()
+    def import_vapi(assistant_id: str, name: str = "vapi") -> str:
+        """Import a Vapi assistant into a local suite."""
+        from wiretap.cli.import_cmd import _save_import
+
+        suite, graph = asyncio.run(import_vapi_assistant(assistant_id))
+        _save_import(name, suite, graph)
+        return f"imported {name}"
+
+    mcp.run()
 
 
 if __name__ == "__main__":

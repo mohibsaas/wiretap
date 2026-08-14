@@ -121,7 +121,7 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const { batch_id } = await client.startBatch({
+      const started = await client.startBatch({
         suite,
         all: true,
         // One softphone registration, so phone runs are serial regardless.
@@ -132,7 +132,22 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
         phone: byPhone ? phone.trim() || null : null,
       });
       onOpenChange(false);
-      navigate(`/batches/${batch_id}`);
+      navigate(`/evaluations?run=${encodeURIComponent(started.batch_id)}`, {
+        state: {
+          seedProgress: started.progress || {
+            batch_id: started.batch_id,
+            suite_id: started.suite_id || suite,
+            status: "running",
+            scenarios: (started.scenario_ids || []).map((id) => ({
+              scenario_id: id,
+              scenario_name: id,
+              phase: "queued",
+              detail: "starting…",
+              turn: 0,
+            })),
+          },
+        },
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -298,7 +313,7 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
               <p className={modalHintClass}>One call at a time.</p>
             )}
           </div>
-          <div className="mt-5 flex items-center gap-2 text-sm">
+          <div className="mt-5 flex items-center gap-1 text-sm">
             <label className="flex cursor-pointer items-center gap-2">
               <Checkbox
                 checked={strict}
@@ -310,7 +325,7 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-[var(--wt-text-muted)] transition-colors hover:text-foreground"
+                  className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[var(--wt-text-muted)] transition-colors hover:text-foreground"
                   aria-label="About strict caller"
                 >
                   <Info className="size-3.5" strokeWidth={1.8} />

@@ -5,7 +5,7 @@ from wiretap.suite.artifacts import (
     regression_failed,
     save_simulation,
 )
-from wiretap.suite.loader import dump_suite, load_suite, suite_to_yaml
+from wiretap.suite.loader import dump_suite, load_suite
 from wiretap.suite.templates import DEFAULT_SUITE
 
 __all__ = [
@@ -17,5 +17,4 @@ __all__ = [
     "load_suite",
     "regression_failed",
     "save_simulation",
-    "suite_to_yaml",
 ]

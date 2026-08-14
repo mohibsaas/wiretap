@@ -19,7 +19,7 @@ from wiretap.models import (
     SuiteConfig,
     TransportKind,
 )
-from wiretap.paths import ensure_layout, graphs_dir, suite_path, suites_dir
+from wiretap.paths import ensure_layout, suite_path, suites_dir
 from wiretap.prompts.defaults import (
     DEFAULT_CALLER_OPENING,
     DEFAULT_GENERATED_RUBRIC,
@@ -117,33 +117,6 @@ def get_suite(name: str, cwd: Path | None = None) -> SuiteConfig:
     return load_suite(suite_path(validate_suite_name(name), cwd))
 
 
-def save_suite(name: str, suite: SuiteConfig, cwd: Path | None = None) -> Path:
-    """Write a suite under the data dir. Writes nothing to stdout."""
-    stem = validate_suite_name(name)
-    ensure_layout(cwd)
-    path = suite_path(stem, cwd)
-    dump_suite(suite, path)
-    return path
-
-
-def save_suite_import(
-    name: str,
-    suite: SuiteConfig,
-    graph: Any,
-    cwd: Path | None = None,
-) -> dict[str, str]:
-    """Persist an imported suite + AgentGraph IR. Writes nothing to stdout.
-
-    Shared by the CLI importer and MCP so neither can be talked into writing
-    outside the data directory.
-    """
-    stem = validate_suite_name(name)
-    path = save_suite(stem, suite, cwd)
-    ir_path = graphs_dir(cwd) / f"{stem}.graph.json"
-    ir_path.write_text(graph.model_dump_json(indent=2), encoding="utf-8")
-    return {"name": stem, "suite_path": str(path), "graph_path": str(ir_path)}
-
-
 def suite_public_dict(suite: SuiteConfig, *, name: str) -> dict[str, Any]:
     """Serialize suite for API — never include secret values."""
     data = suite.model_dump(mode="json")
@@ -217,6 +190,8 @@ def update_suite_cases(
 
 def delete_suite(name: str, cwd: Path | None = None) -> dict[str, Any]:
     """Remove a suite YAML and its agent graph IR, if present."""
+    from wiretap.paths import graphs_dir
+
     stem = validate_suite_name(name)
     path = suite_path(stem, cwd)
     if not path.is_file():

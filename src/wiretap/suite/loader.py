@@ -19,11 +19,8 @@ def load_suite(path: Path | str) -> SuiteConfig:
     return SuiteConfig.model_validate(data)
 
 
-def suite_to_yaml(suite: SuiteConfig) -> str:
-    return yaml.safe_dump(suite.model_dump(mode="json"), sort_keys=False)
-
-
 def dump_suite(suite: SuiteConfig, path: Path | str) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(suite_to_yaml(suite), encoding="utf-8")
+    payload = suite.model_dump(mode="json")
+    p.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")

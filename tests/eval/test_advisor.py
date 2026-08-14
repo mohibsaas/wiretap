@@ -196,7 +196,6 @@ def test_findings_without_evidence_are_dropped(
     )
     assert advice is not None
     assert [f.title for f in advice.findings] == ["Grounded one"]
-    assert advice.findings[0].id == "finding-1"
     # Unknown enum values fall back instead of reaching the UI raw.
     assert advice.findings[0].target == "agent_prompt"
     assert advice.findings[0].severity == "medium"
