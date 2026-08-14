@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "wiretap-api",
+      "cwd": "/Users/harit/wiretap",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "wiretap", "ui", "run", "--no-open"],
+      "port": 8787
+    },
+    {
+      "name": "wiretap-ui",
+      "cwd": "/Users/harit/wiretap/ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173
+    }
+  ]
+}

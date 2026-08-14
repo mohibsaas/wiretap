@@ -15,7 +15,6 @@ from rich import print
 
 from wiretap.cli.pick import pick_option
 from wiretap.cli import style as ui
-from wiretap.models import TransportKind
 from wiretap.providers.catalog import (
     default_voice_for,
     env_for_provider,
@@ -28,6 +27,7 @@ from wiretap.providers.model_catalog import resolve_llm_models
 from wiretap.providers.voice_catalog import resolve_tts_voices
 from wiretap.services.onboard import configure_caller, load_onboard_state, onboard_status
 from wiretap.services.secrets import key_status, upsert_secrets
+from wiretap.services.twilio_pstn import PSTN_PACKAGES
 
 # Platforms → env var for live API key
 PLATFORM_API_KEYS: dict[str, str] = {
@@ -39,13 +39,6 @@ PLATFORM_API_KEYS: dict[str, str] = {
     "bolna": "BOLNA_API_KEY",
     "livekit": "LIVEKIT_API_KEY",
 }
-
-# Distribution packages installed by the optional ``pstn`` extra.
-PSTN_PACKAGES = ("twilio", "pyVoIP")
-
-# The run-time question is "web or phone", not a transport-kind quiz.
-_PHONE_WORDS = {"phone", "pstn", "call", "dial"}
-_WEB_WORDS = {"web", "online", "webrtc"}
 
 
 def is_interactive() -> bool:
@@ -208,9 +201,9 @@ def require_pstn_extra() -> None:
 
     Discovering this mid-dial wastes the setup the user just walked through.
     """
-    from importlib.util import find_spec
+    from wiretap.services.twilio_pstn import missing_pstn_packages
 
-    missing = [name for name in PSTN_PACKAGES if find_spec(name) is None]
+    missing = missing_pstn_packages()
     if not missing:
         return
     ui.err(f"Phone testing needs the pstn extra — {', '.join(missing)} not installed.")
@@ -242,15 +235,10 @@ def _transport_word(kind: str) -> str:
 
 def _resolve_transport(raw: str, *, current: str) -> str:
     """Map a user's word (or a literal transport kind) onto a TransportKind."""
-    value = raw.strip().lower()
-    if value in _PHONE_WORDS:
-        return TransportKind.PSTN.value
-    if value in _WEB_WORDS:
-        # "web" means "however this suite normally connects", unless that is
-        # itself the phone — then there is nothing to fall back to but webrtc.
-        return TransportKind.WEBRTC.value if current == "pstn" else current
+    from wiretap.suite.agent_override import resolve_transport_choice
+
     try:
-        return TransportKind(value).value
+        return resolve_transport_choice(raw, current=current)
     except ValueError:
         ui.err(f"Unknown transport {raw!r}.")
         ui.muted("Use web or phone (or a transport kind: text, webrtc, sip, pstn).")
@@ -799,36 +787,23 @@ def _pick(
 
 def _phone_rows(cwd: Path | None = None) -> list[tuple[str, Any]]:
     """Whether `simulate --transport phone` could place a call right now."""
-    from importlib.util import find_spec
-
     from rich.text import Text
 
-    from wiretap.services.secrets import key_status
-    from wiretap.services.twilio_pstn import (
-        ACCOUNT_SID_ENV,
-        AUTH_TOKEN_ENV,
-        resolve_from_number,
-    )
+    from wiretap.services.twilio_pstn import pstn_status
 
-    keys = key_status(cwd)
-    credentials = bool(keys.get(ACCOUNT_SID_ENV) and keys.get(AUTH_TOKEN_ENV))
-    extra = all(find_spec(name) is not None for name in PSTN_PACKAGES)
-    number = resolve_from_number(cwd) or ""
+    status = pstn_status(cwd)
+    number = status["from_number"] or ""
 
-    if credentials and extra and number:
+    if status["ready"]:
         state = Text("ready", style=f"bold {ui.OK}")
     else:
-        missing = []
-        if not extra:
-            missing.append("uv sync --extra pstn")
-        if not credentials:
-            missing.append("Twilio keys")
-        if not number:
-            missing.append("caller number")
         state = Text("not configured", style=f"bold {ui.WARN}")
-        state.append(f"  ({' · '.join(missing)})", style=ui.MUTED)
 
+    # The remaining steps go on their own row: crammed into the state cell they
+    # wrap and split the verdict across lines on an 80-column terminal.
     rows: list[tuple[str, Any]] = [("Phone", state)]
+    if not status["ready"]:
+        rows.append(("Phone setup", Text(" · ".join(status["missing"]), style=ui.MUTED)))
     if number:
         rows.append(("Caller number", Text(number, style=ui.ACCENT)))
     return rows

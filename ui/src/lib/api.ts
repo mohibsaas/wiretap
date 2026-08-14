@@ -101,6 +101,38 @@ export type Simulation = {
   audio_path?: string | null;
 };
 
+export type AdviceTarget =
+  | "agent_prompt"
+  | "tools"
+  | "flow"
+  | "voice_runtime"
+  | "test_suite";
+
+export type AdviceFinding = {
+  id: string;
+  target: AdviceTarget | string;
+  severity: "high" | "medium" | "low" | string;
+  title: string;
+  problem?: string;
+  recommendation?: string;
+  /** Drop-in prompt wording. Empty when the agent config was not importable. */
+  suggested_text?: string;
+  evidence?: { scenario_id?: string; quote: string }[];
+  affected_scenarios?: string[];
+  confidence?: "high" | "medium" | "low" | string;
+};
+
+/** Run-level agent-improvement advice, generated once per evaluation run. */
+export type RunAdvice = {
+  summary?: string;
+  findings: AdviceFinding[];
+  model?: string;
+  generated_at?: string;
+  grounding?: "config" | "behavior_only" | string;
+  based_on_scenarios?: string[];
+  error?: string;
+};
+
 export type EvaluationRun = {
   batch_id: string;
   suite_id: string;
@@ -116,6 +148,7 @@ export type EvaluationRun = {
   total: number;
   concurrency?: number;
   simulations?: Simulation[];
+  advice?: RunAdvice | null;
 };
 
 export type Batch = {
@@ -125,6 +158,7 @@ export type Batch = {
   scenario_ids: string[];
   results: Simulation[];
   error?: string | null;
+  advice?: RunAdvice | null;
 };
 
 export type Category = {
@@ -184,6 +218,27 @@ export type OnboardStatus = {
   caller?: CallerConfig;
   providers?: ProviderCatalog;
   categories_catalog: Category[];
+};
+
+export type PstnStatus = {
+  ready: boolean;
+  extra_installed: boolean;
+  missing_packages: string[];
+  has_credentials: boolean;
+  from_number?: string | null;
+  missing: string[];
+  keys: Record<string, boolean>;
+};
+
+export type TwilioNumber = {
+  phone_number: string;
+  friendly_name?: string;
+};
+
+/** The agent's own number a phone run would dial, and where it came from. */
+export type AgentNumberTarget = {
+  number: string | null;
+  source: "request" | "suite" | "saved" | null;
 };
 
 export type AgentRow = {
@@ -301,6 +356,31 @@ export const client = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  // Secrets are write-only: the API answers with presence, never values.
+  secretsStatus: () => api<Record<string, boolean>>("/api/secrets/status"),
+  saveSecrets: (secrets: Record<string, string>) =>
+    api<{ updated: string[]; status: Record<string, boolean> }>("/api/secrets", {
+      method: "POST",
+      body: JSON.stringify({ secrets }),
+    }),
+  pstnStatus: () => api<PstnStatus>("/api/pstn/status"),
+  pstnAgentNumber: (suite: string, agentFrom?: string | null) => {
+    const params = new URLSearchParams({ suite });
+    if (agentFrom?.trim()) params.set("agent_from", agentFrom.trim());
+    return api<AgentNumberTarget>(`/api/pstn/agent-number?${params.toString()}`);
+  },
+  twilioNumbers: (opts?: { limit?: number; contains?: string | null }) => {
+    const params = new URLSearchParams({ limit: String(opts?.limit ?? 20) });
+    if (opts?.contains?.trim()) params.set("contains", opts.contains.trim());
+    return api<{ numbers: TwilioNumber[]; selected: string | null }>(
+      `/api/twilio/phone-numbers?${params.toString()}`,
+    );
+  },
+  saveFromNumber: (fromNumber: string) =>
+    api<{ selected: string }>("/api/twilio/from-number", {
+      method: "POST",
+      body: JSON.stringify({ from_number: fromNumber }),
+    }),
   agents: () => api<AgentRow[]>("/api/agents"),
   suites: () => api<SuiteSummary[]>("/api/suites"),
   suite: (name: string) => api<SuiteDetail>(`/api/suites/${encodeURIComponent(name)}`),
@@ -326,6 +406,8 @@ export const client = {
     platform?: string | null;
     token_env?: string | null;
     agent_from?: string | null;
+    transport?: string | null;
+    phone?: string | null;
   }) =>
     api<{ batch_id: string }>("/api/batches", {
       method: "POST",

@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { client, type AgentRow, type SuiteSummary } from "@/lib/api";
+import { Link, useNavigate } from "react-router-dom";
+import {
+  client,
+  type AgentNumberTarget,
+  type AgentRow,
+  type PstnStatus,
+  type SuiteSummary,
+} from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -29,6 +35,10 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
   const [agentFrom, setAgentFrom] = useState("");
   const [concurrency, setConcurrency] = useState(4);
   const [strict, setStrict] = useState(false);
+  const [transport, setTransport] = useState<"web" | "phone">("web");
+  const [phone, setPhone] = useState("");
+  const [pstn, setPstn] = useState<PstnStatus | null>(null);
+  const [target, setTarget] = useState<AgentNumberTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,10 +51,35 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
       setSuite(pick);
     });
     void client.agents().then(setAgents).catch(() => setAgents([]));
+    void client.pstnStatus().then(setPstn).catch(() => setPstn(null));
     setAgentFrom("");
     setConcurrency(4);
     setStrict(false);
+    setTransport("web");
+    setPhone("");
   }, [open, initialSuite]);
+
+  // Show the number a phone run would dial rather than failing at dial time.
+  useEffect(() => {
+    if (!open || !suite) {
+      setTarget(null);
+      return;
+    }
+    let live = true;
+    void client
+      .pstnAgentNumber(suite, agentFrom || null)
+      .then((found) => {
+        if (!live) return;
+        setTarget(found);
+        setPhone(found.number || "");
+      })
+      .catch(() => {
+        if (live) setTarget(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [open, suite, agentFrom]);
 
   const otherAgents = useMemo(
     () => agents.filter((a) => a.suite && a.suite !== suite),
@@ -52,6 +87,8 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
   );
 
   const selected = suites.find((s) => s.name === suite);
+  const byPhone = transport === "phone";
+  const phoneReady = pstn?.ready === true;
 
   async function start() {
     if (!suite) return;
@@ -61,9 +98,12 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
       const { batch_id } = await client.startBatch({
         suite,
         all: true,
-        concurrency: Math.max(1, concurrency),
+        // One softphone registration, so phone runs are serial regardless.
+        concurrency: byPhone ? 1 : Math.max(1, concurrency),
         strict,
         agent_from: agentFrom || null,
+        transport: byPhone ? "phone" : null,
+        phone: byPhone ? phone.trim() || null : null,
       });
       onOpenChange(false);
       navigate(`/batches/${batch_id}`);
@@ -129,6 +169,51 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
             </select>
           </div>
 
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="run-transport">Reach agent via</Label>
+            <select
+              id="run-transport"
+              className="h-10 w-full rounded-[10px] border border-input bg-card px-3 text-[13px]"
+              value={transport}
+              onChange={(e) => setTransport(e.target.value === "phone" ? "phone" : "web")}
+            >
+              <option value="web">
+                Web{selected?.transport ? ` · ${selected.transport}` : ""}
+              </option>
+              <option value="phone" disabled={!phoneReady}>
+                Phone · real call{phoneReady ? "" : " (not set up)"}
+              </option>
+            </select>
+            {!phoneReady && (
+              <p className="text-xs text-muted-foreground">
+                Phone runs need Twilio —{" "}
+                <Link to="/settings" className="underline">
+                  finish phone testing in Settings
+                </Link>
+                {pstn?.missing?.length ? ` (${pstn.missing.join(", ")})` : ""}.
+              </p>
+            )}
+          </div>
+
+          {byPhone && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="run-phone">Agent number to dial</Label>
+              <Input
+                id="run-phone"
+                className="h-10 rounded-[10px] font-mono text-[13px]"
+                placeholder="+15551234567"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                {target?.number && target.source !== "request"
+                  ? `From the ${target.source === "suite" ? "suite" : "last run"}.`
+                  : "No number saved for this agent yet — enter the one that reaches it."}
+                {pstn?.from_number ? ` Calling from ${pstn.from_number}.` : ""}
+              </p>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="run-concurrency">Concurrency</Label>
@@ -138,9 +223,13 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
                 min={1}
                 max={32}
                 className="h-10 w-20 rounded-[10px]"
-                value={concurrency}
+                value={byPhone ? 1 : concurrency}
+                disabled={byPhone}
                 onChange={(e) => setConcurrency(Number(e.target.value) || 1)}
               />
+              {byPhone && (
+                <p className="text-xs text-muted-foreground">One call at a time.</p>
+              )}
             </div>
             <label className="mt-5 flex items-center gap-2 text-sm">
               <Checkbox
@@ -158,7 +247,7 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={start} disabled={busy || !suite}>
+          <Button onClick={start} disabled={busy || !suite || (byPhone && !phone.trim())}>
             {busy ? "Starting…" : "Start run"}
           </Button>
         </DialogFooter>

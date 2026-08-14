@@ -16,12 +16,15 @@ from typing import Any, Literal
 from wiretap.eval.tools import tool_report_text
 from wiretap.eval.transcript import transcript_text
 from wiretap.models import JudgeConfig, JudgeResult, ToolCallRecord, TurnRecord
-from wiretap.prompts.judge import judge_call_prompt
+from wiretap.prompts.judge import judge_call_prompt, judge_system_prompt
 from wiretap.providers.llm import acomplete
 
 DEFAULT_PASS_THRESHOLD = 0.7
 DEFAULT_FAIL_BELOW = 0.5
 JudgeVerdict = Literal["fail", "partial", "pass"]
+# Not a band: the judge never produced a usable score, so the call says nothing
+# about the agent. Scoring it 0.0 would file our own outage as an agent failure.
+INCONCLUSIVE = "inconclusive"
 
 
 async def judge_call(
@@ -61,19 +64,39 @@ async def judge_call(
             capture=tool_capture,
         ),
     )
-    raw = await acomplete(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.0,
-        max_tokens=800,
-    )
+    try:
+        raw = await acomplete(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": judge_system_prompt(
+                        fail_below=fail_below, pass_at=pass_at
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.0,
+            max_tokens=800,
+        )
+    except Exception as exc:  # provider outage, timeout, auth, rate limit
+        return _inconclusive(
+            f"Judge model call failed: {type(exc).__name__}: {exc}",
+            fail_below=fail_below,
+            pass_at=pass_at,
+        )
     data = _parse_json(raw)
     score = _coerce_score(data.get("score"))
     if score is None:
         # Legacy multi-rubric / alias keys
         score = _coerce_score(data.get("overall_score"))
     if score is None:
-        score = 0.0
+        return _inconclusive(
+            str(data.get("reason") or "").strip()
+            or f"Judge returned no usable score: {raw[:200]}",
+            fail_below=fail_below,
+            pass_at=pass_at,
+        )
 
     verdict = verdict_for_score(score, fail_below=fail_below, pass_at=pass_at)
     passed = verdict == "pass"
@@ -100,6 +123,26 @@ async def judge_call(
         fail_below=fail_below,
         pass_at=pass_at,
     )
+
+
+def _inconclusive(reason: str, *, fail_below: float, pass_at: float) -> JudgeResult:
+    """Judge unusable — score stays None so no band can be inferred from it."""
+    return JudgeResult(
+        passed=False,
+        score=None,
+        verdict=INCONCLUSIVE,
+        reason=f"Inconclusive: {reason}",
+        suggestions=[],
+        metrics=[],
+        pass_mode="goal_match",
+        fail_below=fail_below,
+        pass_at=pass_at,
+    )
+
+
+def judge_inconclusive(result: JudgeResult) -> bool:
+    """True when the judge produced no usable verdict for this call."""
+    return (result.verdict or "").lower() == INCONCLUSIVE or result.score is None
 
 
 def verdict_for_score(
@@ -164,6 +207,8 @@ def _parse_json(raw: str) -> dict[str, Any]:
 __all__ = [
     "DEFAULT_FAIL_BELOW",
     "DEFAULT_PASS_THRESHOLD",
+    "INCONCLUSIVE",
     "judge_call",
+    "judge_inconclusive",
     "verdict_for_score",
 ]

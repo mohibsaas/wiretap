@@ -54,6 +54,11 @@ def register(app: typer.Typer) -> None:
         quiet: bool = typer.Option(
             False, "--quiet", "-q", help="Minimal output (no live progress board)."
         ),
+        no_advice: bool = typer.Option(
+            False,
+            "--no-advice",
+            help="Skip the run-level agent-improvement advisor (one LLM call).",
+        ),
         agent_id: str | None = typer.Option(
             None,
             "--agent-id",
@@ -113,8 +118,10 @@ def register(app: typer.Typer) -> None:
             SimulateDisplay,
             print_fail_details,
             print_inconclusive_details,
+            print_run_advice,
             print_run_summary,
         )
+        from wiretap.eval.advisor import advise_for_run
         from wiretap.paths import resolve_suite_path
         from wiretap.suite import load_suite
         from wiretap.suite.agent_override import with_agent_override
@@ -358,6 +365,13 @@ def register(app: typer.Typer) -> None:
                     failures += 1
                 print_fail_details(art, console=console)
 
+        advice = None
+        if artifacts and not no_advice:
+            try:
+                advice = asyncio.run(advise_for_run(cfg, artifacts, suite_id=suite_id))
+            except Exception:  # noqa: BLE001 — advice never changes the outcome
+                advice = None
+
         passed = sum(
             1 for a in artifacts if a.passed and not a.meta.get("inconclusive")
         )
@@ -381,8 +395,12 @@ def register(app: typer.Typer) -> None:
                 "total": len(selected),
                 "concurrency": conc,
                 "pass_threshold": pass_threshold,
+                "advice": advice.model_dump(mode="json") if advice else None,
             }
         )
+
+        if advice:
+            print_run_advice(advice, console=console)
 
         print_run_summary(
             passed=passed,

@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { PhoneTestingCard } from "@/components/PhoneTestingCard";
 import { client, type OnboardStatus } from "@/lib/api";
 
 export function SettingsPage() {
@@ -19,7 +20,10 @@ export function SettingsPage() {
   }, []);
 
   const caller = status?.caller;
-  const keys = status?.keys ?? {};
+  // Twilio keys belong to phone testing below, not to the tester agent stack.
+  const callerKeys = Object.entries(status?.keys ?? {}).filter(
+    ([name]) => !name.startsWith("TWILIO_"),
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -71,12 +75,12 @@ export function SettingsPage() {
             </div>
             <Separator />
             <div className="flex flex-wrap gap-2">
-              {Object.entries(keys).map(([name, present]) => (
+              {callerKeys.map(([name, present]) => (
                 <Badge key={name} variant={present ? "pass" : "muted"}>
                   {name}: {present ? "set" : "missing"}
                 </Badge>
               ))}
-              {Object.keys(keys).length === 0 && (
+              {callerKeys.length === 0 && (
                 <span className="text-sm text-muted-foreground">No key status yet.</span>
               )}
             </div>
@@ -106,6 +110,13 @@ export function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+      </section>
+
+      <section className="flex flex-col gap-2.5">
+        <div className="text-[11px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase">
+          Phone testing · PSTN
+        </div>
+        <PhoneTestingCard />
       </section>
     </div>
   );

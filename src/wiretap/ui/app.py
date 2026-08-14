@@ -48,6 +48,10 @@ class StartBatchBody(BaseModel):
     platform: str | None = None
     token_env: str | None = None
     agent_from: str | None = None
+    # Per-run: "web" or "phone" (or a literal transport kind). None keeps the
+    # suite's own transport.
+    transport: str | None = None
+    phone: str | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -143,6 +147,37 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         return {"updated": updated, "status": key_status(cwd)}
+
+    @app.get("/api/pstn/status")
+    def api_pstn_status() -> dict[str, Any]:
+        """Phone-testing readiness: presence of credentials, extra and caller number."""
+        from wiretap.services.twilio_pstn import pstn_status
+
+        return pstn_status(cwd)
+
+    @app.get("/api/pstn/agent-number")
+    def api_pstn_agent_number(
+        suite: str,
+        agent_from: str | None = None,
+    ) -> dict[str, Any]:
+        """The number a phone run would dial for this suite, when one is known.
+
+        Lets the run dialog show the target up front instead of failing at dial
+        time, and tells it when the user has to type one in.
+        """
+        from wiretap.services.agent_numbers import resolve_agent_number
+        from wiretap.suite.agent_override import with_agent_override
+
+        try:
+            cfg = get_suite(validate_suite_name(suite), cwd)
+            if agent_from:
+                cfg = with_agent_override(cfg, agent_from=agent_from, cwd=cwd)
+            number, source = resolve_agent_number(cfg, cwd=cwd)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return {"number": number, "source": source}
 
     @app.get("/api/twilio/phone-numbers")
     def api_twilio_numbers(limit: int = 20, contains: str | None = None) -> dict[str, Any]:
@@ -313,6 +348,8 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
                 platform=body.platform,
                 token_env=body.token_env,
                 agent_from=body.agent_from,
+                transport=body.transport,
+                phone=body.phone,
                 cwd=cwd,
             )
         except (KeyError, ValueError, FileNotFoundError) as exc:

@@ -374,6 +374,58 @@ def print_inconclusive_details(art: Any, *, console: Console | None = None) -> N
     out.print()
 
 
+_TARGET_LABELS = {
+    "agent_prompt": "Prompt",
+    "tools": "Tools",
+    "flow": "Flow",
+    "voice_runtime": "Voice config",
+    "test_suite": "Test suite",
+}
+
+
+def print_run_advice(advice: Any, *, console: Console | None = None) -> None:
+    """Run-level improvement card — what to change about the agent."""
+    out = console or Console()
+    findings = list(getattr(advice, "findings", None) or [])
+    summary = str(getattr(advice, "summary", "") or "").strip()
+    if not findings and not summary:
+        return
+
+    head = Text()
+    head.append("◈ ", style=f"bold {ACCENT}")
+    head.append("Suggested improvements", style=f"bold {ACCENT}")
+    if getattr(advice, "grounding", "") == "behavior_only":
+        head.append("  ·  from call behavior only (no agent import)", style=MUTED)
+
+    parts: list[RenderableType] = [head]
+    if summary:
+        parts.extend([Text(), Text(summary, style=MUTED)])
+
+    for finding in findings:
+        severity = str(getattr(finding, "severity", "medium") or "medium").lower()
+        color = ERR if severity == "high" else WARN if severity == "medium" else MUTED
+        target = _TARGET_LABELS.get(
+            str(getattr(finding, "target", "") or ""), "Agent"
+        )
+        line = Text()
+        line.append("\n  ● ", style=color)
+        line.append(f"[{target}] ", style=MUTED)
+        line.append(str(getattr(finding, "title", "") or "").strip(), style="bold")
+        parts.append(line)
+
+        recommendation = str(getattr(finding, "recommendation", "") or "").strip()
+        if recommendation:
+            parts.append(Text(f"      {recommendation}", style=MUTED))
+        affected = list(getattr(finding, "affected_scenarios", None) or [])
+        if affected:
+            parts.append(
+                Text(f"      Affects {len(affected)}: {', '.join(affected[:4])}", style=MUTED)
+            )
+
+    out.print(Panel(Group(*parts), border_style=ACCENT, padding=(0, 1)))
+    out.print()
+
+
 def print_run_summary(
     *,
     passed: int,

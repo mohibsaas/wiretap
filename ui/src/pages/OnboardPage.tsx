@@ -10,8 +10,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PhoneTestingCard } from "@/components/PhoneTestingCard";
 
-type Step = 1 | 2;
+type Step = 1 | 2 | 3;
 
 function envLabel(p?: ProviderInfo) {
   return p?.env || "API key";
@@ -62,6 +63,7 @@ export function OnboardPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectedName, setConnectedName] = useState<string | null>(null);
+  const [generatedSuite, setGeneratedSuite] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -334,7 +336,9 @@ export function OnboardPage() {
         tests_per_category: perCat,
       });
       setStatus(await client.onboardStatus());
-      navigate(`/suites/${res.suite_name}`);
+      // Phone is optional and comes last, mirroring step 4 of `wiretap init`.
+      setGeneratedSuite(res.suite_name);
+      setStep(3);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -360,6 +364,7 @@ export function OnboardPage() {
           1 · {addAgentMode ? "Agent" : "Connect"}
         </Badge>
         <Badge variant={step === 2 ? "default" : "muted"}>2 · Tests</Badge>
+        <Badge variant={step === 3 ? "default" : "muted"}>3 · Phone (optional)</Badge>
       </div>
 
       {error && (
@@ -857,6 +862,29 @@ export function OnboardPage() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {step === 3 && (
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Suite{" "}
+            <span className="font-medium text-foreground">{generatedSuite}</span> is
+            ready. Runs reach the agent over the web unless you set up phone testing —
+            you can do this later from Settings.
+          </p>
+          <PhoneTestingCard />
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => navigate(`/suites/${generatedSuite}`)}
+            >
+              Skip for now
+            </Button>
+            <Button onClick={() => navigate(`/suites/${generatedSuite}`)}>
+              Go to suite
+            </Button>
+          </div>
+        </div>
       )}
     </div>
   );

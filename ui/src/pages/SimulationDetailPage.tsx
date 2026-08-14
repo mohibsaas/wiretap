@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
+  Check,
   ChevronDown,
+  Copy,
   FileText,
   FlaskConical,
   RefreshCw,
+  Sparkles,
 } from "lucide-react";
 import { CallAudioPlayer, formatClock, buildSpeechSegments, activeSegmentIndex, hasRealTimings, type TimedTurn } from "@/components/CallAudioPlayer";
 import { TruncatedText } from "@/components/TruncatedText";
@@ -16,9 +19,219 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { client, type Simulation, type ToolCall } from "@/lib/api";
+import {
+  client,
+  type AdviceFinding,
+  type RunAdvice,
+  type Simulation,
+  type ToolCall,
+} from "@/lib/api";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatGoalPct, simulationVerdict } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+const TARGET_LABELS: Record<string, string> = {
+  agent_prompt: "Prompt",
+  tools: "Tools",
+  flow: "Flow",
+  voice_runtime: "Voice config",
+  test_suite: "Test suite",
+};
+
+const SEVERITY_VARIANT: Record<string, "fail" | "warn" | "muted"> = {
+  high: "fail",
+  medium: "warn",
+  low: "muted",
+};
+
+const segmentTabClass = cn(
+  "box-border h-[30px] flex-none rounded-[9px] border border-transparent px-[18px] py-0 text-[13.5px] font-medium text-foreground shadow-none",
+  "hover:text-foreground data-active:border-border data-active:bg-card data-active:font-semibold data-active:text-foreground",
+  "data-active:shadow-[0_1px_2px_rgba(41,41,39,0.06)] dark:data-active:border-border dark:data-active:bg-card",
+);
+
+const fieldLabelClass =
+  "text-[10.5px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase";
+
+function FindingCard({
+  finding,
+  index,
+}: {
+  finding: AdviceFinding;
+  index: number;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [showEvidence, setShowEvidence] = useState(false);
+  const evidence = finding.evidence ?? [];
+  const affected = finding.affected_scenarios ?? [];
+  const severity = String(finding.severity ?? "medium").toLowerCase();
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(finding.suggested_text ?? "");
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
+
+  return (
+    <article className="rounded-[14px] border border-border bg-card px-5 py-4.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <Badge
+              variant={SEVERITY_VARIANT[severity] ?? "warn"}
+              className="h-auto rounded-full px-2 py-0.5 text-[10.5px] font-semibold capitalize"
+            >
+              {severity}
+            </Badge>
+            <Badge
+              variant="outline"
+              className="h-auto rounded-full px-2 py-0.5 text-[10.5px]"
+            >
+              {TARGET_LABELS[finding.target] ?? "Agent"}
+            </Badge>
+            {affected.length > 1 && (
+              <span className="text-[11.5px] text-muted-foreground">
+                Affects {affected.length} calls in this run
+              </span>
+            )}
+          </div>
+          <h3 className="text-[14.5px] leading-snug font-semibold text-pretty break-words">
+            {finding.title}
+          </h3>
+        </div>
+        <span className="shrink-0 pt-0.5 font-mono text-[11px] text-[var(--wt-text-muted)]">
+          {String(index + 1).padStart(2, "0")}
+        </span>
+      </div>
+
+      {finding.problem && (
+        <div className="mt-3.5">
+          <div className={fieldLabelClass}>What happened</div>
+          <p className="mt-1 text-[13px] leading-relaxed text-pretty break-words">
+            {finding.problem}
+          </p>
+        </div>
+      )}
+
+      {finding.recommendation && (
+        <div className="mt-3.5">
+          <div className={fieldLabelClass}>What to change</div>
+          <p className="mt-1 text-[13px] leading-relaxed text-pretty break-words">
+            {finding.recommendation}
+          </p>
+        </div>
+      )}
+
+      {finding.suggested_text && (
+        <div className="mt-4 rounded-[12px] border border-border bg-[var(--wt-section)] p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className={fieldLabelClass}>Suggested prompt wording</div>
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 rounded-full px-2.5 text-[12px]"
+                onClick={() => void copy()}
+              >
+                {copied ? (
+                  <Check data-icon="inline-start" />
+                ) : (
+                  <Copy data-icon="inline-start" />
+                )}
+                {copied ? "Copied" : "Copy"}
+              </Button>
+              <Button
+                size="sm"
+                disabled
+                className="h-7 rounded-full px-2.5 text-[12px]"
+              >
+                <Sparkles data-icon="inline-start" />
+                Apply to prompt
+              </Button>
+            </div>
+          </div>
+          <p className="rounded-[9px] border border-border bg-card px-3 py-2.5 font-mono text-[12px] leading-relaxed text-pretty break-words">
+            {finding.suggested_text}
+          </p>
+          <p className="mt-2 text-[11.5px] text-muted-foreground">
+            Copy it into your agent for now — writing changes back to the live
+            agent is not wired up yet.
+          </p>
+        </div>
+      )}
+
+      {evidence.length > 0 && (
+        <div className="mt-3.5">
+          <button
+            type="button"
+            onClick={() => setShowEvidence(!showEvidence)}
+            className="text-[12px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            {showEvidence ? "Hide evidence" : `Evidence (${evidence.length})`}
+          </button>
+          {showEvidence && (
+            <ul className="mt-2 space-y-2">
+              {evidence.map((item, i) => (
+                <li
+                  key={`${item.scenario_id}-${i}`}
+                  className="border-l-2 border-border pl-3"
+                >
+                  <p className="text-[12.5px] leading-relaxed text-pretty break-words">
+                    “{item.quote}”
+                  </p>
+                  {item.scenario_id && (
+                    <p className="mt-0.5 font-mono text-[11px] text-[var(--wt-text-muted)]">
+                      {item.scenario_id}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function ImprovementsPanel({
+  advice,
+  findings,
+  scoped,
+}: {
+  advice: RunAdvice | null;
+  findings: AdviceFinding[];
+  scoped: boolean;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain pr-2 pb-8">
+      <div className="rounded-[14px] border border-border bg-[var(--wt-section)] px-5 py-4">
+        <p className="text-[13px] leading-relaxed text-pretty">
+          {scoped
+            ? "Changes to the agent that would fix this call."
+            : "Themes from this run. None of them name this call specifically."}
+        </p>
+        {advice?.summary && (
+          <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground text-pretty break-words">
+            {advice.summary}
+          </p>
+        )}
+        <p className="mt-2 text-[11.5px] text-muted-foreground">
+          {advice?.grounding === "behavior_only"
+            ? "Based on call behavior only — import this agent for config-aware advice."
+            : "Based on this run's failures and the agent's imported configuration."}
+        </p>
+      </div>
+      {findings.map((finding, i) => (
+        <FindingCard
+          key={finding.id || `${finding.title}-${i}`}
+          finding={finding}
+          index={i}
+        />
+      ))}
+    </div>
+  );
+}
 
 function ToolRow({ call }: { call: ToolCall }) {
   const [open, setOpen] = useState(false);
@@ -71,6 +284,8 @@ export function SimulationDetailPage() {
   const navigate = useNavigate();
   const { simulationId = "", batchId = "" } = useParams();
   const [sim, setSim] = useState<Simulation | null>(null);
+  const [advice, setAdvice] = useState<RunAdvice | null>(null);
+  const [view, setView] = useState<"transcript" | "improvements">("transcript");
   const [error, setError] = useState<string | null>(null);
   const [activeTurn, setActiveTurn] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -123,6 +338,35 @@ export function SimulationDetailPage() {
   const backTo = backBatch
     ? `/evaluations?run=${encodeURIComponent(backBatch)}`
     : "/evaluations";
+
+  // Advice is generated once per run, so it lives on the parent evaluation.
+  useEffect(() => {
+    if (!backBatch) return;
+    let cancelled = false;
+    client
+      .evaluation(backBatch)
+      .then((run) => {
+        if (!cancelled) setAdvice(run.advice ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setAdvice(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [backBatch]);
+
+  const findings = useMemo(() => {
+    const all = advice?.findings ?? [];
+    if (!sim || all.length === 0) return { items: [] as AdviceFinding[], scoped: true };
+    const mine = all.filter((f) =>
+      (f.affected_scenarios ?? []).includes(sim.scenario_id),
+    );
+    if (mine.length > 0) return { items: mine, scoped: true };
+    // Nothing named this call: show the run's themes rather than an empty card,
+    // but only where there is a failure to explain.
+    return { items: sim.passed ? [] : all.slice(0, 2), scoped: false };
+  }, [advice, sim]);
 
   const turnCount = sim?.transcript?.length || 0;
   const agentLabel =
@@ -363,18 +607,57 @@ export function SimulationDetailPage() {
         <div className="flex min-h-0 flex-1 justify-center overflow-hidden px-8 pt-5">
           <div className="flex min-h-0 w-full max-w-[1148px] gap-7">
             <div className="flex min-h-0 min-w-0 max-w-[820px] flex-1 flex-col">
-              <div className="mb-3.5 flex shrink-0 flex-wrap items-baseline justify-between gap-3">
-                <div className="flex min-w-0 items-baseline gap-2.5">
+              <div className="mb-3.5 flex shrink-0 flex-wrap items-center justify-between gap-3">
+                {findings.items.length > 0 ? (
+                  <Tabs
+                    value={view}
+                    onValueChange={(v) =>
+                      setView(v as "transcript" | "improvements")
+                    }
+                    className="gap-0"
+                  >
+                    <TabsList className="box-border flex h-9 items-center gap-0.5 rounded-xl bg-[var(--wt-section)] p-[3px] text-foreground">
+                      <TabsTrigger value="transcript" className={segmentTabClass}>
+                        Transcript
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="improvements"
+                        className={segmentTabClass}
+                      >
+                        Improvements
+                        <Badge
+                          variant={view === "improvements" ? "default" : "muted"}
+                          className="ml-1.5 h-[18px] min-w-[18px] rounded-full px-1.5 text-[10.5px]"
+                        >
+                          {findings.items.length}
+                        </Badge>
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                ) : (
                   <h2 className="shrink-0 text-[15px] font-semibold">
                     Transcript
                   </h2>
+                )}
+                {view === "transcript" && (
                   <span className="font-mono text-xs text-[var(--wt-text-muted)]">
                     {turnCount} turns
                   </span>
-                </div>
+                )}
               </div>
 
-              <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overscroll-contain pr-2 pb-8">
+              {view === "improvements" && findings.items.length > 0 && (
+                <ImprovementsPanel
+                  advice={advice}
+                  findings={findings.items}
+                  scoped={findings.scoped}
+                />
+              )}
+
+              <div
+                hidden={view !== "transcript"}
+                className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overscroll-contain pr-2 pb-8"
+              >
                 {sim.transcript.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     Empty transcript.
@@ -522,6 +805,17 @@ export function SimulationDetailPage() {
                 {toolSummary && (
                   <p className="mt-3 text-[12px] text-muted-foreground">{toolSummary}</p>
                 )}
+                {findings.items.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setView("improvements")}
+                    className="mt-3.5 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-primary underline-offset-2 hover:underline"
+                  >
+                    <Sparkles className="size-3.5" />
+                    {findings.items.length} suggested{" "}
+                    {findings.items.length === 1 ? "improvement" : "improvements"}
+                  </button>
+                )}
               </div>
 
               <div className="min-w-0 shrink-0 rounded-[14px] border border-border bg-card px-5 py-5">
@@ -567,6 +861,7 @@ export function SimulationDetailPage() {
                   </div>
                 </div>
               </div>
+
             </aside>
           </div>
         </div>

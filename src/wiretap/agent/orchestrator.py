@@ -10,6 +10,7 @@ Voice STT/TTS lives on the transport; this module only decides what to say.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +24,41 @@ from wiretap.prompts.test_agent import (
     phase_task_message,
 )
 from wiretap.providers.llm import acomplete
+
+# Dialog turns carried across a phase boundary. Phases exist for long calls, so
+# the whole history would grow the prompt without bound.
+MAX_CARRIED_DIALOG = 12
+
+# Models emit the control sentinels with stray case and spacing ("[[ hangup ]]").
+# Anything left in the text is spoken aloud to the live agent, so strip loosely…
+_SENTINEL = re.compile(r"\[\[\s*(HANGUP|PHASE_DONE)\s*\]\]", re.IGNORECASE)
+# …but only act on sentinels that actually end the utterance: a model narrating
+# "I'll send [[HANGUP]] when we're done" must not hang up mid-call.
+_TRAILING_SENTINEL = re.compile(
+    r"\[\[\s*(HANGUP|PHASE_DONE)\s*\]\][\s.!?,;:\"')\]]*$", re.IGNORECASE
+)
+
+
+def split_sentinels(text: str) -> tuple[str, bool, bool]:
+    """Spoken text with sentinels removed, plus ``(hangup, phase_done)``.
+
+    Both sentinels can arrive together in either order, so the tail is peeled
+    repeatedly rather than tested once.
+    """
+    hangup = False
+    phase_done = False
+    tail = (text or "").strip()
+    while True:
+        match = _TRAILING_SENTINEL.search(tail)
+        if not match:
+            break
+        if match.group(1).upper() == "HANGUP":
+            hangup = True
+        else:
+            phase_done = True
+        tail = tail[: match.start()].strip()
+    clean = re.sub(r"\s{2,}", " ", _SENTINEL.sub(" ", tail)).strip()
+    return clean, hangup, phase_done
 
 
 @dataclass
@@ -127,6 +163,9 @@ class TestAgentOrchestrator:
         self._caller_turn = 0
         self._engine = "test_agent"
         self.history: list[dict[str, str]] = []
+        # Spoken dialog only, kept apart from history because the control
+        # messages we inject also carry the "user" role.
+        self._dialog: list[dict[str, str]] = []
         self._enter_node(0)
 
     @property
@@ -156,9 +195,17 @@ class TestAgentOrchestrator:
                 self.history.append(
                     {"role": str(msg.get("role") or "system"), "content": str(msg["content"])}
                 )
+        # Phases are steps within ONE call: without the earlier dialog the caller
+        # re-introduces itself and re-asks what it already got answered.
+        self.history.extend(self._dialog[-MAX_CARRIED_DIALOG:])
+
+    def _record(self, role: str, content: str) -> None:
+        turn = {"role": role, "content": content}
+        self.history.append(turn)
+        self._dialog.append(turn)
 
     def observe_agent(self, text: str) -> None:
-        self.history.append({"role": "user", "content": agent_said_message(text)})
+        self._record("user", agent_said_message(text))
 
     async def next_utterance(self) -> tuple[str, bool]:
         self._caller_turn += 1
@@ -166,27 +213,24 @@ class TestAgentOrchestrator:
         beat = beat_for_turn(self.beats, self._caller_turn)
         if beat and beat.say:
             text = beat.say.strip()
-            self.history.append({"role": "assistant", "content": text})
+            self._record("assistant", text)
             return text, False
 
-        self.history.append(
-            {
-                "role": "user",
-                "content": TEST_AGENT_NEXT_REPLY,
-            }
-        )
+        # The nudge is not persisted: repeating it every turn would stack copies
+        # of the same instruction in a long call.
         # Must be async — sync LiteLLM blocks the whole event loop and
         # serializes concurrent scenario dials.
         text = await acomplete(
             model=self.model,
-            messages=self.history,
+            messages=[
+                *self.history,
+                {"role": "user", "content": TEST_AGENT_NEXT_REPLY},
+            ],
             temperature=self.temperature,
         )
-        self.history.append({"role": "assistant", "content": text})
+        self._record("assistant", text)
 
-        hangup = "[[HANGUP]]" in text
-        phase_done = "[[PHASE_DONE]]" in text
-        clean = text.replace("[[HANGUP]]", "").replace("[[PHASE_DONE]]", "").strip()
+        clean, hangup, phase_done = split_sentinels(text)
 
         if beat and beat.must_include and beat.must_include.lower() not in clean.lower():
             clean = f"{clean} {beat.must_include}".strip()
@@ -231,8 +275,10 @@ def build_orchestrator(
 
 
 __all__ = [
+    "MAX_CARRIED_DIALOG",
     "FlowNode",
     "TestAgentOrchestrator",
     "build_orchestrator",
     "phases_to_nodes",
+    "split_sentinels",
 ]

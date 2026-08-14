@@ -383,7 +383,10 @@ async def connect_agent(
             )
         else:
             raise ValueError(f"unsupported platform: {plat}")
-        agent_name = suite.personas[0].identity if suite.personas else agent_id
+        # The imported suite's first persona is the simulated *caller*, so its
+        # identity reads "A customer calling X". This name reaches the generation
+        # brief, where it grounds every scenario — it must be the agent's.
+        agent_name = (graph.name.strip() if graph and graph.name else "") or agent_id
         ensure_layout(cwd)
         path = suite_path(name, cwd)
         dump_suite(suite, path)

@@ -48,6 +48,22 @@ from wiretap.services.agent_brief import end_call_phrases
 GENERATION_MAX_TOKENS = 5000
 RETRY_MAX_TOKENS = 3000
 
+# Caller facts are spoken aloud and stored in the suite, so a credential-looking
+# key never survives even though the prompt already forbids one.
+MAX_KNOWLEDGE_KEYS = 12
+MAX_KNOWLEDGE_VALUE = 120
+_SECRETISH_KEYS = (
+    "password",
+    "passcode",
+    "token",
+    "api_key",
+    "apikey",
+    "secret",
+    "ssn",
+    "cvv",
+    "pin",
+)
+
 # A caller opening with a farewell hangs up the call, which then scores as an
 # agent failure. Rejected at generation time rather than debugged later.
 _FAREWELL_PATTERNS = (
@@ -160,6 +176,26 @@ def _allowed_tools(brief: dict[str, Any] | None) -> set[str]:
     return out
 
 
+def _caller_knowledge(raw: Any) -> dict[str, str]:
+    """Fake caller facts the simulator may speak, minus anything credential-shaped.
+
+    Deliberately not run through ``sanitize_text``: that redacts every 6+ digit
+    run, which is exactly the ZIP and phone the caller is supposed to recite.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        name = str(key).strip().lower()
+        text = str(value).strip()
+        if not name or not text or len(out) >= MAX_KNOWLEDGE_KEYS:
+            continue
+        if any(bad in name for bad in _SECRETISH_KEYS):
+            continue
+        out[name] = text[:MAX_KNOWLEDGE_VALUE]
+    return out
+
+
 def _expected_tools(raw: Any, allowed: set[str]) -> list[str]:
     """Keep only tools the agent really has — a hallucinated name would fail
     every run against an expectation the agent could never satisfy."""
@@ -197,6 +233,7 @@ def _normalize_test(
         "expected_tools": _expected_tools(
             item.get("expected_tools"), allowed_tools or set()
         ),
+        "knowledge": _caller_knowledge(item.get("knowledge")),
     }
 
 
@@ -244,7 +281,6 @@ def llm_generate_category_tests(
         category=category,
         category_label=str(meta["label"]),
         category_description=str(meta["description"]),
-        count=n,
         few_shot_examples=list(examples),
         agent_brief=brief,
     )
@@ -279,7 +315,7 @@ def llm_generate_category_tests(
                         need=n - len(out),
                         category=category,
                         agent_name=agent_name,
-                        existing_names=[str(t["name"]) for t in out],
+                        existing_tests=out,
                         context=context,
                     ),
                 },

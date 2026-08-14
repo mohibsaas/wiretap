@@ -10,7 +10,11 @@ from wiretap.agent.events import ProgressHandler, SimEvent, SimPhase, truncate
 from wiretap.agent.orchestrator import build_orchestrator
 from wiretap.agent.beats import beat_for_turn
 from wiretap.eval import check_caller_contract, judge_call, run_rules
-from wiretap.eval.judge import DEFAULT_PASS_THRESHOLD
+from wiretap.eval.judge import (
+    DEFAULT_PASS_THRESHOLD,
+    INCONCLUSIVE,
+    judge_inconclusive,
+)
 from wiretap.models import (
     JudgeResult,
     Persona,
@@ -303,14 +307,22 @@ async def simulate_scenario(
         tool_calls=tool_calls,
         tool_capture=tool_capture,
     )
+    # An unusable judge or a broken rule pattern says nothing about the agent.
+    if rules.errors and not judge_inconclusive(judge):
+        judge.verdict = INCONCLUSIVE
+        judge.passed = False
+        judge.reason = (
+            f"Inconclusive: {'; '.join(rules.errors)} (judge said: {judge.reason})"
+        )
+    inconclusive = judge_inconclusive(judge) or bool(rules.errors)
     # Deterministic rules can still fail a goal-pass.
-    if not rules.passed and judge.passed:
+    if rules.failures and judge.passed:
         judge.passed = False
         judge.verdict = "fail"
         judge.suggestions = judge.suggestions or [
             f"Fix rule failure: {f}" for f in rules.failures
         ]
-    passed = bool(rules.passed and judge.passed)
+    passed = bool(rules.passed and judge.passed and not inconclusive)
     if passed:
         judge.suggestions = []
         judge.verdict = "pass"
@@ -332,6 +344,10 @@ async def simulate_scenario(
         ),
         "playback_turns": _playback_turns(live_transcript),
     }
+    if inconclusive:
+        meta["inconclusive"] = True
+    if rules.errors:
+        meta["suite_errors"] = rules.errors
     if live_transcript is not transcript:
         meta["live_turn_count"] = len(live_transcript)
 
@@ -352,7 +368,8 @@ async def simulate_scenario(
         meta=meta,
         audio_path=audio_rel,
     )
-    if regression_failed(artifact, baseline):
+    # An inconclusive call is not evidence of a regression.
+    if not inconclusive and regression_failed(artifact, baseline):
         artifact.meta["regression"] = True
         artifact.passed = False
         artifact.judge.verdict = "fail"

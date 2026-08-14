@@ -8,7 +8,12 @@ import json
 import pytest
 
 from wiretap.eval.concurrency import provider_concurrency_cap, resolve_concurrency
-from wiretap.eval.judge import judge_call, verdict_for_score
+from wiretap.eval.judge import (
+    INCONCLUSIVE,
+    judge_call,
+    judge_inconclusive,
+    verdict_for_score,
+)
 from wiretap.models import JudgeConfig, TurnRecord
 
 
@@ -176,3 +181,36 @@ def test_legacy_overall_score_key(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert result.score == 0.4
     assert result.verdict == "fail"
+
+
+def test_non_json_judge_reply_is_inconclusive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Our parser hiccup is not the agent failing its goal."""
+
+    async def _fake(**kwargs: object) -> str:
+        return "I'm sorry, I can't help with that."
+
+    monkeypatch.setattr("wiretap.eval.judge.acomplete", _fake)
+    result = asyncio.run(
+        judge_call(model="gpt-4o-mini", turns=_turns(), success_criteria="Greet")
+    )
+    assert result.verdict == INCONCLUSIVE
+    assert result.score is None
+    assert result.passed is False
+    assert judge_inconclusive(result)
+
+
+def test_judge_provider_failure_is_inconclusive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A judge outage after the call must not be recorded as an agent failure."""
+
+    async def _boom(**kwargs: object) -> str:
+        raise RuntimeError("429 rate limited")
+
+    monkeypatch.setattr("wiretap.eval.judge.acomplete", _boom)
+    result = asyncio.run(
+        judge_call(model="gpt-4o-mini", turns=_turns(), success_criteria="Greet")
+    )
+    assert result.verdict == INCONCLUSIVE
+    assert result.score is None
+    assert "rate limited" in result.reason

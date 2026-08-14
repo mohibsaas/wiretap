@@ -74,6 +74,8 @@ class AgentTarget(BaseModel):
 class ModelSlots(BaseModel):
     simulator: str = "gpt-4o-mini"
     judge: str = "gpt-4o-mini"
+    # Run-level config advisor. Empty falls back to the judge model.
+    advisor: str = ""
 
 
 class SpeechConfig(BaseModel):
@@ -184,6 +186,56 @@ class JudgeResult(BaseModel):
 class RuleResult(BaseModel):
     passed: bool
     failures: list[str] = Field(default_factory=list)
+    # Suite-authoring faults (e.g. an invalid regex) — not agent behavior, so
+    # they make a call inconclusive rather than failed.
+    errors: list[str] = Field(default_factory=list)
+
+
+class AdviceEvidence(BaseModel):
+    """One transcript moment backing a finding."""
+
+    scenario_id: str = ""
+    quote: str = ""
+
+
+class AdviceFinding(BaseModel):
+    """One improvement the advisor proposes for the agent under test.
+
+    ``target`` routes the fix to the thing that must change; ``test_suite`` is
+    deliberately one of the options so the advisor can call out an unrealistic
+    criterion instead of manufacturing an agent fault.
+    """
+
+    id: str = ""
+    # agent_prompt | tools | flow | voice_runtime | test_suite
+    target: str = "agent_prompt"
+    severity: str = "medium"  # high | medium | low
+    title: str = ""
+    problem: str = ""
+    recommendation: str = ""
+    # Drop-in wording for the agent's prompt. Empty when the advisor could not
+    # see the config and would only be guessing.
+    suggested_text: str = ""
+    evidence: list[AdviceEvidence] = Field(default_factory=list)
+    affected_scenarios: list[str] = Field(default_factory=list)
+    confidence: str = "medium"  # high | medium | low
+
+
+class RunAdvice(BaseModel):
+    """Config / prompt feedback for one evaluation run.
+
+    Generated once per run rather than per call: a weak prompt line shows up as
+    a pattern across scenarios, which a single-call judge cannot see.
+    """
+
+    summary: str = ""
+    findings: list[AdviceFinding] = Field(default_factory=list)
+    model: str = ""
+    generated_at: str = ""
+    # config = the agent's brief was available; behavior_only = transcripts only
+    grounding: str = "behavior_only"
+    based_on_scenarios: list[str] = Field(default_factory=list)
+    error: str = ""
 
 
 class SimulationArtifact(BaseModel):
@@ -210,6 +262,8 @@ class SimulationArtifact(BaseModel):
 
 
 __all__ = [
+    "AdviceEvidence",
+    "AdviceFinding",
     "AgentTarget",
     "Beat",
     "JudgeConfig",
@@ -220,6 +274,7 @@ __all__ = [
     "Persona",
     "RuleCheck",
     "RuleResult",
+    "RunAdvice",
     "RunMode",
     "Scenario",
     "SimulationArtifact",

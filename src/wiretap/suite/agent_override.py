@@ -12,6 +12,26 @@ from wiretap.models import SuiteConfig, TransportKind
 from wiretap.paths import suite_path
 from wiretap.suite.loader import load_suite
 
+# The run-time question is "web or phone", not a transport-kind quiz.
+_PHONE_WORDS = {"phone", "pstn", "call", "dial"}
+_WEB_WORDS = {"web", "online", "webrtc"}
+
+
+def resolve_transport_choice(raw: str, *, current: str) -> str:
+    """Map a user's word (or a literal transport kind) onto a TransportKind value.
+
+    Raises ``ValueError`` for anything unrecognised, so the CLI and the API can
+    each report it their own way.
+    """
+    value = (raw or "").strip().lower()
+    if value in _PHONE_WORDS:
+        return TransportKind.PSTN.value
+    if value in _WEB_WORDS:
+        # "web" means "however this suite normally connects", unless that is
+        # itself the phone — then there is nothing to fall back to but webrtc.
+        return TransportKind.WEBRTC.value if current == "pstn" else current
+    return TransportKind(value).value
+
 
 def with_agent_override(
     suite: SuiteConfig,
@@ -52,4 +72,4 @@ def with_agent_override(
     return out
 
 
-__all__ = ["with_agent_override"]
+__all__ = ["resolve_transport_choice", "with_agent_override"]

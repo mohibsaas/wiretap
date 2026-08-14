@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from wiretap.suite import load_suite
-from wiretap.models import SimulationArtifact, SuiteConfig
+from wiretap.models import RunAdvice, SimulationArtifact, SuiteConfig
 from wiretap.paths import suite_path
 from wiretap.agent import simulate_scenario
 from datetime import UTC, datetime
@@ -34,6 +34,7 @@ class BatchRecord:
     pass_threshold: float = 0.7
     strict: bool = False
     results: list[SimulationArtifact] = field(default_factory=list)
+    advice: RunAdvice | None = None
     error: str | None = None
     created_at: str = ""
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -78,10 +79,12 @@ def start_batch(
     platform: str | None = None,
     token_env: str | None = None,
     agent_from: str | None = None,
+    transport: str | None = None,
+    phone: str | None = None,
     cwd: Path | None = None,
     scenario_timeout_s: float = DEFAULT_SCENARIO_TIMEOUT_S,
 ) -> BatchRecord:
-    from wiretap.suite.agent_override import with_agent_override
+    from wiretap.suite.agent_override import resolve_transport_choice, with_agent_override
     from wiretap.services.onboard import apply_simulator_config
     from wiretap.eval.concurrency import resolve_concurrency
 
@@ -96,6 +99,14 @@ def start_batch(
         agent_from=agent_from,
         cwd=cwd,
     )
+    # Web or phone is a per-run choice, so the suite on disk stays untouched.
+    if transport is not None and str(transport).strip():
+        kind = resolve_transport_choice(str(transport), current=cfg.agent.transport.value)
+        cfg = (
+            _dial_by_phone(cfg, phone=phone, cwd=cwd)
+            if kind == "pstn"
+            else with_agent_override(cfg, transport=kind)
+        )
     if strict:
         cfg.mode.strict = True
         cfg.mode.temperature = 0.2
@@ -141,6 +152,36 @@ def start_batch(
         )
     )
     return batch
+
+
+def _dial_by_phone(
+    cfg: SuiteConfig,
+    *,
+    phone: str | None,
+    cwd: Path | None,
+) -> SuiteConfig:
+    """Switch this run to a real phone call, or say what is missing.
+
+    The same checks the CLI makes, minus the prompts: a browser cannot answer a
+    picker, so unknown setup is a rejected request rather than a question.
+    """
+    from wiretap.services.agent_numbers import resolve_agent_number
+    from wiretap.services.twilio_pstn import pstn_status
+    from wiretap.suite.agent_override import with_agent_override
+
+    status = pstn_status(cwd)
+    if not status["ready"]:
+        steps = ", ".join(status["missing"])
+        raise ValueError(
+            f"Phone testing is not set up ({steps}). "
+            "Finish phone testing in Settings, then start the run again."
+        )
+    number, _source = resolve_agent_number(cfg, phone=phone, cwd=cwd)
+    if not number:
+        raise ValueError(
+            "No phone number known for this agent — enter the number to dial."
+        )
+    return with_agent_override(cfg, transport="pstn", phone_number=number)
 
 
 async def _run_batch(
@@ -267,8 +308,35 @@ async def _run_batch(
             }
         )
     finally:
+        await _attach_advice(batch, cfg, suite_id, cwd)
         _persist_evaluation_run(batch, cwd)
         batch.close()
+
+
+async def _attach_advice(
+    batch: BatchRecord, cfg: SuiteConfig, suite_id: str, cwd: Path | None
+) -> None:
+    """Run-level config advice. Never allowed to disturb the batch."""
+    from wiretap.eval.advisor import advise_for_run
+
+    if not batch.results:
+        return
+    try:
+        batch.advice = await advise_for_run(
+            cfg, batch.results, suite_id=suite_id, cwd=cwd
+        )
+    except Exception:  # noqa: BLE001 — advice must never disturb a batch
+        return
+    if batch.advice is None:
+        return
+    batch._emit(
+        {
+            "type": "advice_ready",
+            "batch_id": batch.batch_id,
+            "finding_count": len(batch.advice.findings),
+            "summary": batch.advice.summary,
+        }
+    )
 
 
 def _persist_evaluation_run(batch: BatchRecord, cwd: Path | None) -> None:
@@ -299,6 +367,9 @@ def _persist_evaluation_run(batch: BatchRecord, cwd: Path | None) -> None:
                 "total": len(batch.scenario_ids),
                 "concurrency": batch.concurrency,
                 "pass_threshold": batch.pass_threshold,
+                "advice": (
+                    batch.advice.model_dump(mode="json") if batch.advice else None
+                ),
             },
             cwd,
         )
@@ -318,4 +389,5 @@ def batch_public(batch: BatchRecord) -> dict[str, Any]:
         "error": batch.error,
         "created_at": batch.created_at,
         "results": [a.model_dump(mode="json") for a in batch.results],
+        "advice": batch.advice.model_dump(mode="json") if batch.advice else None,
     }

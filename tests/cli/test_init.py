@@ -14,6 +14,9 @@ from wiretap.services.secrets import key_status, upsert_secrets
 
 @pytest.fixture()
 def runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CliRunner:
+    # Point the data dir at the sandbox: without it `status` reads the developer's
+    # own ~/.wiretap and reports whatever they happen to have configured.
+    monkeypatch.setenv("WIRETAP_HOME", str(tmp_path / ".wiretap"))
     monkeypatch.chdir(tmp_path)
     return CliRunner()
 
