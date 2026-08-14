@@ -32,6 +32,8 @@ FROM_NUMBER_ENV = "TWILIO_FROM_NUMBER"
 SIP_USERNAME = "wiretap"
 CREDENTIAL_LIST_NAME = "wiretap"
 SETTINGS_FILENAME = "twilio.json"
+# Distribution packages installed by the optional ``pstn`` extra.
+PSTN_PACKAGES = ("twilio", "pyVoIP")
 # Accounts can hold thousands of numbers; never page through all of them.
 NUMBER_PAGE_SIZE = 20
 
@@ -61,6 +63,49 @@ def normalize_e164(value: str | None, *, field: str = "phone number") -> str:
             f"Invalid {field}: {value!r}. Use E.164 format, e.g. +14155550123."
         )
     return candidate
+
+
+def missing_pstn_packages() -> list[str]:
+    """Packages from the optional ``pstn`` extra that are not importable."""
+    from importlib.util import find_spec
+
+    return [name for name in PSTN_PACKAGES if find_spec(name) is None]
+
+
+def pstn_status(cwd: Path | None = None) -> dict[str, Any]:
+    """Whether a phone run could place a call right now — presence, never values.
+
+    Shared by `wiretap status` and the dashboard so both judge readiness the
+    same way. ``missing`` holds the remaining setup steps, in the order a user
+    would do them.
+    """
+    from wiretap.services.secrets import key_status
+
+    keys = key_status(cwd)
+    absent_packages = missing_pstn_packages()
+    credentials = bool(keys.get(ACCOUNT_SID_ENV) and keys.get(AUTH_TOKEN_ENV))
+    number = resolve_from_number(cwd) or ""
+
+    missing: list[str] = []
+    if absent_packages:
+        missing.append("uv sync --extra pstn")
+    if not credentials:
+        missing.append("Twilio keys")
+    if not number:
+        missing.append("caller number")
+
+    return {
+        "ready": not missing,
+        "extra_installed": not absent_packages,
+        "missing_packages": absent_packages,
+        "has_credentials": credentials,
+        "from_number": number or None,
+        "missing": missing,
+        "keys": {
+            env: bool(keys.get(env))
+            for env in (ACCOUNT_SID_ENV, AUTH_TOKEN_ENV, SIP_PASSWORD_ENV, FROM_NUMBER_ENV)
+        },
+    }
 
 
 def twilio_client() -> Any:
@@ -317,6 +362,7 @@ __all__ = [
     "AUTH_TOKEN_ENV",
     "CREDENTIAL_LIST_NAME",
     "FROM_NUMBER_ENV",
+    "PSTN_PACKAGES",
     "SIP_PASSWORD_ENV",
     "SIP_USERNAME",
     "SipEndpoint",
@@ -325,8 +371,10 @@ __all__ = [
     "generate_sip_password",
     "hangup_call",
     "list_phone_numbers",
+    "missing_pstn_packages",
     "normalize_e164",
     "place_bridge_call",
+    "pstn_status",
     "resolve_from_number",
     "save_from_number",
     "saved_from_number",

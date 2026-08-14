@@ -19,12 +19,19 @@ import httpx
 
 from wiretap.models import AgentTarget
 from wiretap.providers.env import require_env
-from wiretap.providers.factory import build_stt
-from wiretap.providers.speech import AudioBuffer
 from wiretap.providers.tts import TTS_SAMPLE_RATE, synthesize_pcm
-from wiretap.transport.audio_util import downsample_pcm16, pcm16be_to_le, pcm16le_to_be
+from wiretap.transport.audio_util import (
+    downsample_pcm16,
+    pad_pcm16_silence,
+    pcm16be_to_le,
+    pcm16le_to_be,
+)
 from wiretap.transport.base import Inbound, Transport
-from wiretap.transport.transcript_util import accept_final_utterance
+from wiretap.transport.turn_gate import (
+    AgentTurnGate,
+    receive_coalesced,
+    speak_with_gate_mute,
+)
 
 SYNTHFLOW_API = "https://api.synthflow.ai"
 _TARGET_RATE = 16_000
@@ -40,16 +47,15 @@ class SynthflowTransport(Transport):
     _tts_name: str = "pyai"
     _stt_name: str = "pyai"
     _voice: str | None = "alloy"
-    _audio_buf: bytearray = field(default_factory=bytearray)
+    _gate: AgentTurnGate | None = None
     _call_id: str | None = None
-    _seen_agent: set[str] = field(default_factory=set)
-    _last_audio_at: float = 0.0
-    _flush_task: asyncio.Task | None = None
 
     def configure_speech(self, *, stt: str, tts: str, voice: str | None) -> None:
         self._stt_name = stt or self._stt_name
         self._tts_name = tts or self._tts_name
         self._voice = voice or self._voice
+        if self._gate is not None:
+            self._gate.configure(stt=self._stt_name)
 
     async def connect(self, target: AgentTarget) -> None:
         try:
@@ -136,68 +142,72 @@ class SynthflowTransport(Transport):
         if call_info.get("type") != "call_info":
             raise RuntimeError(f"Expected Synthflow call_info, got: {call_info!r}")
 
+        self._gate = AgentTurnGate(
+            stt_name=self._stt_name,
+            on_utterance=self._on_agent_utterance,
+        )
+        self._sync_gate_elapsed()
+        await self._gate.start()
         self._connected = True
         self._recv_task = asyncio.create_task(self._reader())
-        self._flush_task = asyncio.create_task(self._silence_flush_loop())
 
     async def send_text(self, text: str) -> None:
         if not self._connected or self._ws is None:
             raise RuntimeError("Synthflow transport not connected")
-        pcm = await synthesize_pcm(
-            text, voice=self._voice or "alloy", provider=self._tts_name
+
+        pcm_task = asyncio.create_task(
+            synthesize_pcm(
+                text, voice=self._voice or "alloy", provider=self._tts_name
+            )
         )
-        pcm16 = downsample_pcm16(pcm, TTS_SAMPLE_RATE, _TARGET_RATE)
-        self._record(pcm16, sample_rate=_TARGET_RATE)
-        be = pcm16le_to_be(pcm16)
-        for i in range(0, len(be), _FRAME_BYTES):
-            frame = be[i : i + _FRAME_BYTES]
-            if len(frame) < _FRAME_BYTES:
-                frame = frame + b"\x00" * (_FRAME_BYTES - len(frame))
-            await self._ws.send(frame)
-            await asyncio.sleep(0.02)
+
+        async def _publish() -> None:
+            assert self._ws is not None
+            pcm = await pcm_task
+            if len(pcm) < TTS_SAMPLE_RATE // 5:
+                raise RuntimeError(
+                    "Caller TTS returned empty/too-short audio — "
+                    "check speech.tts provider and voice id"
+                )
+            pcm16 = downsample_pcm16(pcm, TTS_SAMPLE_RATE, _TARGET_RATE)
+            pcm16 = pad_pcm16_silence(pcm16, sample_rate=_TARGET_RATE)
+            self._record(pcm16, sample_rate=_TARGET_RATE)
+            be = pcm16le_to_be(pcm16)
+            for i in range(0, len(be), _FRAME_BYTES):
+                frame = be[i : i + _FRAME_BYTES]
+                if len(frame) < _FRAME_BYTES:
+                    frame = frame + b"\x00" * (_FRAME_BYTES - len(frame))
+                await self._ws.send(frame)
+                await asyncio.sleep(0.02)
+
+        await speak_with_gate_mute(self._gate, _publish)
 
     async def receive(self) -> Inbound:
-        try:
-            return await asyncio.wait_for(self._pending.get(), timeout=45.0)
-        except TimeoutError:
-            return Inbound(hung_up=True)
+        return await receive_coalesced(
+            self._pending, self._gate, connected=self._connected
+        )
 
     async def hangup(self) -> None:
         self._connected = False
-        if self._flush_task:
-            self._flush_task.cancel()
         if self._recv_task:
             self._recv_task.cancel()
-        if self._audio_buf:
-            await self._flush_audio_stt()
+        gate = self._gate
+        self._gate = None
+        if gate is not None:
+            await gate.stop()
         if self._ws is not None:
             await self._ws.close()
             self._ws = None
 
-    async def _silence_flush_loop(self) -> None:
-        try:
-            while self._connected:
-                await asyncio.sleep(0.25)
-                if not self._audio_buf or not self._last_audio_at:
-                    continue
-                idle = asyncio.get_running_loop().time() - self._last_audio_at
-                if idle >= 0.6 and len(self._audio_buf) >= 3200:
-                    await self._flush_audio_stt()
-        except asyncio.CancelledError:
-            raise
-
-    async def _flush_audio_stt(self) -> None:
-        if not self._audio_buf:
-            return
-        pcm = bytes(self._audio_buf)
-        self._audio_buf.clear()
-        stt = build_stt(self._stt_name)
-        text = await stt.transcribe(
-            AudioBuffer(pcm=pcm, sample_rate=_TARGET_RATE)
+    async def _on_agent_utterance(
+        self,
+        text: str,
+        start_ms: float | None = None,
+        end_ms: float | None = None,
+    ) -> None:
+        await self._pending.put(
+            Inbound(text=text, start_ms=start_ms, end_ms=end_ms)
         )
-        accepted = accept_final_utterance(text, self._seen_agent)
-        if accepted:
-            await self._pending.put(Inbound(text=accepted))
 
     async def _reader(self) -> None:
         assert self._ws is not None
@@ -208,10 +218,8 @@ class SynthflowTransport(Transport):
                 if isinstance(message, bytes):
                     le = pcm16be_to_le(message)
                     self._record(le, sample_rate=_TARGET_RATE)
-                    self._audio_buf.extend(le)
-                    self._last_audio_at = asyncio.get_running_loop().time()
-                    if len(self._audio_buf) > 160_000:
-                        await self._flush_audio_stt()
+                    if self._gate is not None:
+                        self._gate.push(le, sample_rate=_TARGET_RATE)
         except asyncio.CancelledError:
             raise
         except (OSError, ConnectionError, RuntimeError):

@@ -24,6 +24,7 @@ from wiretap.prompts.defaults import (
     IMPORTED_PERSONA_PERSONALITY,
     IMPORTED_SMOKE_RUBRIC,
 )
+from wiretap.prompts.caller_knowledge import enrich_persona_knowledge
 
 
 def suite_from_prompt(
@@ -44,6 +45,7 @@ def suite_from_prompt(
         goal=goal,
         personality=IMPORTED_PERSONA_PERSONALITY,
         constraints=[DO_NOT_REVEAL_TEST_BOT],
+        knowledge=enrich_persona_knowledge({}),
     )
     beats: list[Beat] = [
         Beat(at_turn=1, say=first_message.strip() or DEFAULT_CALLER_OPENING),

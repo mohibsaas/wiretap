@@ -81,6 +81,59 @@ def test_categories_catalog_and_generate(monkeypatch: pytest.MonkeyPatch) -> Non
     assert any(p.name.startswith("Emotional case") for p in suite.personas)
 
 
+def test_connect_records_the_agents_name_not_the_callers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: agent_name took the caller persona's identity, and that name
+    grounds every generated scenario via the agent brief."""
+    import asyncio
+
+    from wiretap.importers.agent_graph import AgentGraph, GraphEdge, GraphNode, NodeType
+    from wiretap.importers.suite_builder import suite_from_prompt
+    from wiretap.services.onboard import connect_agent, load_onboard_state
+
+    graph = AgentGraph(
+        id="ag1",
+        name="Clinic Support Bot",
+        entry_node_id="n1",
+        source_platform="retell",
+        nodes=[
+            GraphNode(
+                id="n1",
+                type=NodeType.CONVERSATION,
+                name="Greet",
+                prompt="You book dental cleanings and quote the published fee.",
+            )
+        ],
+        edges=[GraphEdge(id="e1", source="n1", target="n1", label="loop")],
+    )
+    suite = suite_from_prompt(
+        platform="retell",
+        agent_id="ag1",
+        agent_name="Clinic Support Bot",
+        system_prompt="You book dental cleanings.",
+        graph=graph,
+    )
+
+    async def _fake_import(agent_id: str):
+        return suite, graph
+
+    monkeypatch.setattr("wiretap.services.onboard.import_retell_agent", _fake_import)
+    monkeypatch.setattr(
+        "wiretap.services.onboard.key_status",
+        lambda cwd=None: {"RETELL_API_KEY": True, "PYAI_API_KEY": True},
+    )
+
+    result = asyncio.run(
+        connect_agent(platform="retell", agent_id="ag1", cwd=tmp_path)
+    )
+
+    assert result["agent_name"] == "Clinic Support Bot"
+    assert load_onboard_state(tmp_path)["agent_name"] == "Clinic Support Bot"
+    # The caller persona still describes the caller, and must not be the source.
+    assert suite.personas[0].identity.startswith("A customer calling")
+
+
 def test_load_dotenv_fills_environ(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

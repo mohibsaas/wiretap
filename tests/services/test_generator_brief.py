@@ -202,6 +202,64 @@ def test_expected_tools_reach_the_generated_scenario(
     assert suite.scenarios[0].expected_tools == ["book_appointment"]
 
 
+def test_generated_knowledge_reaches_the_persona(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: knowledge was dropped, so every caller shared one identity."""
+    case = _test_case("A", "Hi, I need to move my appointment.")
+    case["knowledge"] = {
+        "zip_code": "12345",
+        "reference_number": "AB-99",
+        "password": "hunter2",
+    }
+    fake = _Recorder([[case]])
+    monkeypatch.setattr("wiretap.services.generator.complete", fake)
+
+    suite = generate_suite(
+        platform="retell",
+        agent_id="agent_1",
+        agent_name="Clinic bot",
+        purpose="",
+        categories=["task"],
+        tests_per_category=1,
+        brief=BRIEF,
+    )
+
+    knowledge = suite.personas[0].knowledge
+    assert knowledge["zip_code"] == "12345"
+    assert knowledge["reference_number"] == "AB-99"
+    # Credential-shaped keys never reach a suite on disk or a spoken line.
+    assert "password" not in knowledge
+    # Contact defaults still fill what the model left out.
+    assert knowledge["callback_phone"] == "5551234567"
+
+
+def test_retry_explains_why_the_first_batch_shrank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _Recorder(
+        [
+            [
+                _test_case("Good", "Hi, I need to book a cleaning."),
+                _test_case("Hangs up", "Goodbye now, that's all I needed."),
+            ],
+            [_test_case("Replacement", "Hello, can I move my appointment?")],
+        ]
+    )
+    monkeypatch.setattr("wiretap.services.generator.complete", fake)
+
+    llm_generate_category_tests(
+        category="task", count=2, agent_name="Clinic bot", brief=BRIEF
+    )
+
+    retry = fake.payloads[1]
+    assert "farewell" in retry
+    assert "end_call_phrases" in retry
+    # Prior content, not just names, so "distinct" is checkable.
+    assert "Goal Good" in retry
+    assert "Hi, I need to book a cleaning." in retry
+
+
 def test_purpose_suffixes_kept_without_a_brief(monkeypatch: pytest.MonkeyPatch) -> None:
     """Purpose-only suites still lean on the suffixes for grounding."""
     fake = _Recorder([[_test_case("A", "Hi, I need help today.")]])

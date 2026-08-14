@@ -2,6 +2,9 @@
 
 Edit prompts here — call sites import builders/constants, they do not
 inline prompt text.
+
+Agent briefs for generation live in ``wiretap.services.agent_brief`` (single
+source — tools, end-call phrases, strong redaction).
 """
 
 from wiretap.prompts.categories import (
@@ -20,7 +23,7 @@ from wiretap.prompts.defaults import (
     IMPORTED_PERSONA_PERSONALITY,
     IMPORTED_SMOKE_RUBRIC,
 )
-from wiretap.prompts.judge import judge_call_prompt
+from wiretap.prompts.judge import judge_call_prompt, judge_system_prompt
 from wiretap.prompts.suite_generation import (
     SUITE_GENERATION_SYSTEM,
     suite_generation_context,
@@ -58,6 +61,7 @@ __all__ = [
     "agent_said_message",
     "caller_role_message",
     "judge_call_prompt",
+    "judge_system_prompt",
     "phase_task_message",
     "suite_generation_context",
     "suite_generation_retry_user_message",

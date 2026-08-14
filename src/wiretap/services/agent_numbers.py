@@ -187,6 +187,42 @@ def saved_agent_number(
     return number or None
 
 
+def resolve_agent_number(
+    suite: Any,
+    *,
+    phone: str | None = None,
+    cwd: Path | None = None,
+) -> tuple[str | None, str | None]:
+    """The number to dial for this suite, without asking anyone.
+
+    Returns ``(number, source)`` where source is ``request``, ``suite`` or
+    ``saved``, and ``(None, None)`` when nothing is known — the browser has no
+    picker to fall back to, so callers turn that into an error.
+    """
+    candidates = (
+        ("request", phone),
+        ("suite", getattr(suite.agent, "phone_number", None)),
+        (
+            "saved",
+            saved_agent_number(
+                platform=suite.agent.platform,
+                agent_id=suite.agent.agent_id,
+                cwd=cwd,
+            ),
+        ),
+    )
+    for source, value in candidates:
+        raw = str(value or "").strip()
+        if not raw:
+            continue
+        try:
+            return normalize_e164(raw, field="agent phone number"), source
+        except ValueError:
+            if source == "request":
+                raise
+    return None, None
+
+
 def save_agent_number(
     number: str,
     *,
@@ -220,6 +256,7 @@ __all__ = [
     "AgentNumber",
     "cache_key",
     "discover_agent_numbers",
+    "resolve_agent_number",
     "save_agent_number",
     "saved_agent_number",
     "settings_path",

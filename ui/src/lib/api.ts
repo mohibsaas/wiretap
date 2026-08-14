@@ -16,15 +16,55 @@ export type SuiteDetail = {
     agent_id?: string | null;
     token_env?: string | null;
   };
-  personas: { id: string; name?: string; identity: string; goal: string }[];
+  personas: {
+    id: string;
+    name?: string;
+    identity: string;
+    goal: string;
+    constraints?: string[];
+    personality?: string;
+  }[];
   scenarios: {
     id: string;
     name: string;
     persona_id: string;
     max_turns: number;
     success_criteria: string;
+    rubric?: string;
     category?: string | null;
   }[];
+};
+
+export type SuiteCaseUpdate = {
+  scenario_id: string;
+  persona_id: string;
+  name: string;
+  category?: string | null;
+  identity: string;
+  goal: string;
+  constraints: string[];
+  max_turns: number;
+  success_criteria?: string | null;
+  rubric?: string | null;
+};
+
+export type JudgeMetric = {
+  id: string;
+  score: number;
+  passed: boolean;
+  threshold: number;
+  required?: boolean;
+  weight?: number;
+  rationale?: string;
+};
+
+export type ToolCall = {
+  name: string;
+  arguments: Record<string, unknown>;
+  result_summary: string;
+  status: string;
+  turn_index: number | null;
+  at_seconds: number | null;
 };
 
 export type Simulation = {
@@ -37,22 +77,60 @@ export type Simulation = {
   persona_id: string;
   persona_name?: string;
   passed: boolean;
-  transcript: { role: string; text: string }[];
-  tool_calls: ToolCall[];
-  judge: { passed: boolean; reason: string; suggestions: string[] };
+  transcript: {
+    role: string;
+    text: string;
+    start_ms?: number | null;
+    end_ms?: number | null;
+  }[];
+  tool_calls?: ToolCall[];
+  judge: {
+    passed: boolean;
+    reason: string;
+    suggestions: string[];
+    metrics?: JudgeMetric[];
+    score?: number | null;
+    verdict?: string | null;
+    fail_below?: number | null;
+    pass_at?: number | null;
+    pass_mode?: string | null;
+  };
   rules: { passed: boolean; failures: string[] };
-  metrics: Record<string, unknown>;
+  metrics?: Record<string, unknown>;
   meta: Record<string, unknown>;
   audio_path?: string | null;
 };
 
-export type ToolCall = {
-  name: string;
-  arguments: Record<string, unknown>;
-  result_summary: string;
-  status: string;
-  turn_index: number | null;
-  at_seconds: number | null;
+export type AdviceTarget =
+  | "agent_prompt"
+  | "tools"
+  | "flow"
+  | "voice_runtime"
+  | "test_suite";
+
+export type AdviceFinding = {
+  id: string;
+  target: AdviceTarget | string;
+  severity: "high" | "medium" | "low" | string;
+  title: string;
+  problem?: string;
+  recommendation?: string;
+  /** Drop-in prompt wording. Empty when the agent config was not importable. */
+  suggested_text?: string;
+  evidence?: { scenario_id?: string; quote: string }[];
+  affected_scenarios?: string[];
+  confidence?: "high" | "medium" | "low" | string;
+};
+
+/** Run-level agent-improvement advice, generated once per evaluation run. */
+export type RunAdvice = {
+  summary?: string;
+  findings: AdviceFinding[];
+  model?: string;
+  generated_at?: string;
+  grounding?: "config" | "behavior_only" | string;
+  based_on_scenarios?: string[];
+  error?: string;
 };
 
 export type EvaluationRun = {
@@ -70,6 +148,7 @@ export type EvaluationRun = {
   total: number;
   concurrency?: number;
   simulations?: Simulation[];
+  advice?: RunAdvice | null;
 };
 
 export type Batch = {
@@ -79,6 +158,7 @@ export type Batch = {
   scenario_ids: string[];
   results: Simulation[];
   error?: string | null;
+  advice?: RunAdvice | null;
 };
 
 export type Category = {
@@ -88,12 +168,20 @@ export type Category = {
   max_tests: number;
 };
 
+export type VoiceOption = {
+  id: string;
+  label: string;
+};
+
 export type ProviderInfo = {
   id: string;
   label: string;
   kind: string;
   env: string;
   default_model?: string | null;
+  models?: string[];
+  default_voice?: string | null;
+  voices?: VoiceOption[];
 };
 
 export type ProviderCatalog = {
@@ -132,6 +220,27 @@ export type OnboardStatus = {
   categories_catalog: Category[];
 };
 
+export type PstnStatus = {
+  ready: boolean;
+  extra_installed: boolean;
+  missing_packages: string[];
+  has_credentials: boolean;
+  from_number?: string | null;
+  missing: string[];
+  keys: Record<string, boolean>;
+};
+
+export type TwilioNumber = {
+  phone_number: string;
+  friendly_name?: string;
+};
+
+/** The agent's own number a phone run would dial, and where it came from. */
+export type AgentNumberTarget = {
+  number: string | null;
+  source: "request" | "suite" | "saved" | null;
+};
+
 export type AgentRow = {
   id?: string;
   agent_id?: string | null;
@@ -163,6 +272,41 @@ export const client = {
   health: () => api<{ version: string }>("/api/health"),
   onboardStatus: () => api<OnboardStatus>("/api/onboard/status"),
   providers: () => api<ProviderCatalog>("/api/providers"),
+  llmModels: (provider: string, apiKey?: string | null) =>
+    api<{
+      provider: string;
+      models: string[];
+      default_model: string;
+      source: "live" | "curated";
+      live_supported: boolean;
+      error?: string | null;
+    }>(`/api/providers/llm/${encodeURIComponent(provider)}/models`, {
+      method: "POST",
+      body: JSON.stringify({ api_key: apiKey?.trim() || null }),
+    }),
+  ttsVoices: (provider: string, apiKey?: string | null) =>
+    api<{
+      provider: string;
+      voices: VoiceOption[];
+      default_voice: string;
+      source: "live" | "curated";
+      live_supported: boolean;
+      error?: string | null;
+    }>(`/api/providers/tts/${encodeURIComponent(provider)}/voices`, {
+      method: "POST",
+      body: JSON.stringify({ api_key: apiKey?.trim() || null }),
+    }),
+  platformAgents: (platform: string, apiKey?: string | null) =>
+    api<{
+      platform: string;
+      agents: { id: string; name: string; label: string }[];
+      source: "live" | "unavailable";
+      live_supported: boolean;
+      error?: string | null;
+    }>(`/api/platforms/${encodeURIComponent(platform)}/agents`, {
+      method: "POST",
+      body: JSON.stringify({ api_key: apiKey?.trim() || null }),
+    }),
   configureCaller: (body: {
     llm_provider?: string;
     llm_api_key?: string | null;
@@ -212,9 +356,39 @@ export const client = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  // Secrets are write-only: the API answers with presence, never values.
+  secretsStatus: () => api<Record<string, boolean>>("/api/secrets/status"),
+  saveSecrets: (secrets: Record<string, string>) =>
+    api<{ updated: string[]; status: Record<string, boolean> }>("/api/secrets", {
+      method: "POST",
+      body: JSON.stringify({ secrets }),
+    }),
+  pstnStatus: () => api<PstnStatus>("/api/pstn/status"),
+  pstnAgentNumber: (suite: string, agentFrom?: string | null) => {
+    const params = new URLSearchParams({ suite });
+    if (agentFrom?.trim()) params.set("agent_from", agentFrom.trim());
+    return api<AgentNumberTarget>(`/api/pstn/agent-number?${params.toString()}`);
+  },
+  twilioNumbers: (opts?: { limit?: number; contains?: string | null }) => {
+    const params = new URLSearchParams({ limit: String(opts?.limit ?? 20) });
+    if (opts?.contains?.trim()) params.set("contains", opts.contains.trim());
+    return api<{ numbers: TwilioNumber[]; selected: string | null }>(
+      `/api/twilio/phone-numbers?${params.toString()}`,
+    );
+  },
+  saveFromNumber: (fromNumber: string) =>
+    api<{ selected: string }>("/api/twilio/from-number", {
+      method: "POST",
+      body: JSON.stringify({ from_number: fromNumber }),
+    }),
   agents: () => api<AgentRow[]>("/api/agents"),
   suites: () => api<SuiteSummary[]>("/api/suites"),
-  suite: (name: string) => api<SuiteDetail>(`/api/suites/${name}`),
+  suite: (name: string) => api<SuiteDetail>(`/api/suites/${encodeURIComponent(name)}`),
+  updateSuite: (name: string, cases: SuiteCaseUpdate[]) =>
+    api<SuiteDetail>(`/api/suites/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      body: JSON.stringify({ cases }),
+    }),
   evaluations: (limit = 40) =>
     api<EvaluationRun[]>(`/api/evaluations?limit=${limit}`),
   evaluation: (batchId: string) =>
@@ -232,6 +406,8 @@ export const client = {
     platform?: string | null;
     token_env?: string | null;
     agent_from?: string | null;
+    transport?: string | null;
+    phone?: string | null;
   }) =>
     api<{ batch_id: string }>("/api/batches", {
       method: "POST",

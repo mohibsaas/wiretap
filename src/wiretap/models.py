@@ -74,6 +74,8 @@ class AgentTarget(BaseModel):
 class ModelSlots(BaseModel):
     simulator: str = "gpt-4o-mini"
     judge: str = "gpt-4o-mini"
+    # Run-level config advisor. Empty falls back to the judge model.
+    advisor: str = ""
 
 
 class SpeechConfig(BaseModel):
@@ -95,11 +97,38 @@ class SimulationMode(BaseModel):
 RunMode = SimulationMode
 
 
+class JudgeMetricSpec(BaseModel):
+    """Deprecated — kept so older suite YAML still loads."""
+
+    weight: float = 1.0
+    threshold: float = 0.7
+    required: bool = True
+    description: str = ""
+
+
+def default_judge_metrics() -> dict[str, JudgeMetricSpec]:
+    """No multi-rubric pack — goal match is a single score."""
+    return {}
+
+
+class JudgeConfig(BaseModel):
+    """Suite-level judge gate — goal / success-criteria match score."""
+
+    # Bands: score < fail_below → fail; fail_below ≤ score < pass_threshold → partial;
+    # score ≥ pass_threshold → pass.
+    fail_below: float = 0.5
+    pass_threshold: float = 0.7
+    # Deprecated fields (ignored by the goal-match judge; kept for YAML compat).
+    pass_mode: str = "goal_match"
+    metrics: dict[str, JudgeMetricSpec] = Field(default_factory=dict)
+
+
 class SuiteConfig(BaseModel):
     agent: AgentTarget = Field(default_factory=AgentTarget)
     models: ModelSlots = Field(default_factory=ModelSlots)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
     mode: SimulationMode = Field(default_factory=SimulationMode)
+    judge: JudgeConfig = Field(default_factory=JudgeConfig)
     personas: list[Persona]
     scenarios: list[Scenario]
 
@@ -108,6 +137,21 @@ class TurnRecord(BaseModel):
     role: str  # user | agent
     text: str
     intended_text: str | None = None
+    # Offset into the mixed call WAV (CallRecorder timeline), when known.
+    start_ms: float | None = None
+    end_ms: float | None = None
+
+
+class MetricScore(BaseModel):
+    """Deprecated multi-rubric row — kept for old artifacts."""
+
+    id: str
+    score: float
+    passed: bool
+    threshold: float = 0.7
+    required: bool = True
+    weight: float = 1.0
+    rationale: str = ""
 
 
 class ToolCallRecord(BaseModel):
@@ -129,14 +173,69 @@ class ToolCallRecord(BaseModel):
 
 class JudgeResult(BaseModel):
     passed: bool
-    score: float | None = None
+    score: float | None = None  # 0–1 goal match (UI shows as %)
+    verdict: str = "fail"  # fail | partial | pass
     reason: str
     suggestions: list[str] = Field(default_factory=list)
+    metrics: list[MetricScore] = Field(default_factory=list)  # unused (compat)
+    pass_mode: str = "goal_match"
+    fail_below: float = 0.5
+    pass_at: float = 0.7
 
 
 class RuleResult(BaseModel):
     passed: bool
     failures: list[str] = Field(default_factory=list)
+    # Suite-authoring faults (e.g. an invalid regex) — not agent behavior, so
+    # they make a call inconclusive rather than failed.
+    errors: list[str] = Field(default_factory=list)
+
+
+class AdviceEvidence(BaseModel):
+    """One transcript moment backing a finding."""
+
+    scenario_id: str = ""
+    quote: str = ""
+
+
+class AdviceFinding(BaseModel):
+    """One improvement the advisor proposes for the agent under test.
+
+    ``target`` routes the fix to the thing that must change; ``test_suite`` is
+    deliberately one of the options so the advisor can call out an unrealistic
+    criterion instead of manufacturing an agent fault.
+    """
+
+    id: str = ""
+    # agent_prompt | tools | flow | voice_runtime | test_suite
+    target: str = "agent_prompt"
+    severity: str = "medium"  # high | medium | low
+    title: str = ""
+    problem: str = ""
+    recommendation: str = ""
+    # Drop-in wording for the agent's prompt. Empty when the advisor could not
+    # see the config and would only be guessing.
+    suggested_text: str = ""
+    evidence: list[AdviceEvidence] = Field(default_factory=list)
+    affected_scenarios: list[str] = Field(default_factory=list)
+    confidence: str = "medium"  # high | medium | low
+
+
+class RunAdvice(BaseModel):
+    """Config / prompt feedback for one evaluation run.
+
+    Generated once per run rather than per call: a weak prompt line shows up as
+    a pattern across scenarios, which a single-call judge cannot see.
+    """
+
+    summary: str = ""
+    findings: list[AdviceFinding] = Field(default_factory=list)
+    model: str = ""
+    generated_at: str = ""
+    # config = the agent's brief was available; behavior_only = transcripts only
+    grounding: str = "behavior_only"
+    based_on_scenarios: list[str] = Field(default_factory=list)
+    error: str = ""
 
 
 class SimulationArtifact(BaseModel):
@@ -163,13 +262,19 @@ class SimulationArtifact(BaseModel):
 
 
 __all__ = [
+    "AdviceEvidence",
+    "AdviceFinding",
     "AgentTarget",
     "Beat",
+    "JudgeConfig",
+    "JudgeMetricSpec",
     "JudgeResult",
+    "MetricScore",
     "ModelSlots",
     "Persona",
     "RuleCheck",
     "RuleResult",
+    "RunAdvice",
     "RunMode",
     "Scenario",
     "SimulationArtifact",
@@ -179,4 +284,5 @@ __all__ = [
     "ToolCallRecord",
     "TransportKind",
     "TurnRecord",
+    "default_judge_metrics",
 ]

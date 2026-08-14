@@ -62,4 +62,4 @@ def tool_report_text(
     return "\n".join(lines)
 
 
-__all__ = ["tool_report_text"]
+__all__ = ["CAPTURE_OK", "tool_report_text"]

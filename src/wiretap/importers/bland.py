@@ -6,15 +6,8 @@ from typing import Any
 
 import httpx
 
-from wiretap.importers.agent_graph import (
-    AgentGraph,
-    GraphEdge,
-    GraphNode,
-    GraphTool,
-    NodeType,
-    graph_tools,
-)
 from wiretap.importers.suite_builder import suite_from_prompt
+from wiretap.importers.agent_graph import AgentGraph, GraphEdge, GraphNode, NodeType
 from wiretap.models import SuiteConfig, TransportKind
 from wiretap.providers.env import require_env
 
@@ -57,8 +50,6 @@ def _bland_to_graph(pathway_id: str, data: dict[str, Any]) -> AgentGraph:
     raw_nodes = data.get("nodes") or []
     raw_edges = data.get("edges") or []
     nodes: list[GraphNode] = []
-    tools: list[GraphTool] = []
-    seen_tools: set[str] = set()
     entry = ""
     for n in raw_nodes:
         nid = str(n.get("id") or "")
@@ -73,22 +64,14 @@ def _bland_to_graph(pathway_id: str, data: dict[str, Any]) -> AgentGraph:
             mapped = NodeType.LOGIC
         if ndata.get("isStart"):
             entry = nid
-        node_name = str(ndata.get("name") or nid)
         nodes.append(
             GraphNode(
                 id=nid,
                 type=mapped,
-                name=node_name,
+                name=str(ndata.get("name") or nid),
                 prompt=str(ndata.get("text") or ndata.get("prompt") or ""),
             )
         )
-        # Bland has no tool list — capability lives in the node type itself, and
-        # a webhook node's data carries its url, headers and auth.
-        for tool in _bland_node_tools(nid, node_name, ntype, ndata):
-            if tool.name in seen_tools:
-                continue
-            seen_tools.add(tool.name)
-            tools.append(tool)
     edges = [
         GraphEdge(
             id=str(e.get("id") or f"{e.get('source')}->{e.get('target')}"),
@@ -108,45 +91,5 @@ def _bland_to_graph(pathway_id: str, data: dict[str, Any]) -> AgentGraph:
         entry_node_id=entry or "start",
         nodes=nodes,
         edges=edges,
-        tools=tools,
         source_platform="bland",
     )
-
-
-_TOOL_NODE_TYPES = ("webhook", "transfer", "knowledge", "sms", "email", "api")
-
-
-def _bland_extract_vars(ndata: dict[str, Any]) -> list[str]:
-    """``extractVars`` is a list of [name, type, description] triples."""
-    raw = ndata.get("extractVars")
-    if not isinstance(raw, (list, tuple)):
-        return []
-    names = []
-    for item in raw:
-        if isinstance(item, (list, tuple)) and item:
-            name = str(item[0]).strip()
-        elif isinstance(item, dict):
-            name = str(item.get("name") or "").strip()
-        else:
-            name = ""
-        if name:
-            names.append(name)
-    return names
-
-
-def _bland_node_tools(
-    nid: str, name: str, ntype: str, ndata: dict[str, Any]
-) -> list[GraphTool]:
-    explicit = graph_tools(ndata.get("tools"), node_id=nid)
-    if not any(kind in ntype for kind in _TOOL_NODE_TYPES):
-        return explicit
-    return [
-        GraphTool(
-            name=name or nid,
-            type=ntype,
-            description=str(ndata.get("text") or ndata.get("prompt") or "").strip(),
-            parameters=_bland_extract_vars(ndata),
-            node_id=nid,
-        ),
-        *explicit,
-    ]
