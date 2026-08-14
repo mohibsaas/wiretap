@@ -7,7 +7,6 @@ import {
   ReportScorePlate,
   ReportStatusPill,
 } from "@/components/ReportChrome";
-import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -154,14 +153,48 @@ export function ReportsPage() {
   }, [reports, query, statusFilter, agentFilter, coverageFilter]);
 
   return (
-    <div className="flex flex-col gap-6 pb-16">
-      <PageHeader
-        title="Reports"
-        meta={`${reports.length} report${reports.length === 1 ? "" : "s"}`}
-        subtitle="Scores, badges, and per-category breakdowns for each run — open one for the fixes it suggests."
-      />
+    <div className="flex flex-col gap-8 pb-16">
+      <div>
+        <div className="mb-2 font-mono text-[11px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase">
+          Reports
+        </div>
+        <h2 className="max-w-[760px] text-[26px] font-bold leading-tight tracking-[-0.015em] text-pretty">
+          Every run leaves a report you can hand to whoever signs off.
+        </h2>
+        <p className="mt-3 max-w-[760px] text-[13.5px] leading-relaxed text-muted-foreground text-pretty">
+          A <b className="font-semibold text-foreground">report</b> scores one run
+          against the categories it covered, collects the badges that run earned,
+          and keeps every simulation behind the number. Open one for the
+          per-category breakdown and the fixes it suggests.
+        </p>
+      </div>
 
       <section className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-6">
+          <div className="min-w-0 flex-1">
+            <div className="mb-1 flex items-baseline gap-2.5">
+              <div className="text-[17px] font-semibold text-foreground">
+                All reports
+              </div>
+              <span className="font-mono text-[12.5px] text-[var(--wt-text-muted)] tabular-nums">
+                {reports.length}
+              </span>
+            </div>
+            <p className="text-[12.5px] leading-relaxed text-muted-foreground">
+              Newest first. Score is the average across the categories that ran.
+            </p>
+          </div>
+          <div className="relative w-full max-w-[280px] shrink-0">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search reports, agents, suites…"
+              className="h-9 rounded-[10px] pl-9"
+            />
+          </div>
+        </div>
+
         <div className="flex flex-wrap items-center gap-3">
           <Tabs
             value={statusFilter}
@@ -204,16 +237,6 @@ export function ReportsPage() {
               { value: "partial", label: "Partial" },
             ]}
           />
-
-          <div className="relative ml-auto w-full max-w-[280px] shrink-0">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search reports, agents, suites…"
-              className="h-9 rounded-[10px] pl-9"
-            />
-          </div>
         </div>
 
         {error && <p className="text-sm text-fail">{error}</p>}

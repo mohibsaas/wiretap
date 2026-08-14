@@ -1,4 +1,7 @@
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
+  ChevronDown,
   ChevronRight,
   CircleDot,
   MoreHorizontal,
@@ -8,10 +11,7 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
 import { NewRunDialog } from "@/components/NewRunDialog";
-import { FilterMenu } from "@/components/FilterMenu";
 import { PageHeader } from "@/components/PageHeader";
 import { TruncatedText } from "@/components/TruncatedText";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,10 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -31,13 +35,7 @@ import {
   type Simulation,
   type SuiteSummary,
 } from "@/lib/api";
-import {
-  formatRelative,
-  passRatePercent,
-  runDuration,
-  runVerdict,
-  simulationVerdict,
-} from "@/lib/format";
+import { formatRelative, passRatePercent, runDuration, runVerdict, simulationVerdict } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Tab = "runs" | "simulations";
@@ -267,7 +265,7 @@ export function EvaluationsPage() {
 
           <div className="h-5 w-px bg-border" />
 
-          <FilterMenu
+          <FilterDropdown
             icon={<Square className="size-3.5" />}
             label="Agent"
             value={agentFilter}
@@ -277,7 +275,7 @@ export function EvaluationsPage() {
               ...platforms.map((p) => ({ value: p, label: p })),
             ]}
           />
-          <FilterMenu
+          <FilterDropdown
             icon={<CircleDot className="size-3.5" />}
             label="Status"
             value={statusFilter}
@@ -443,6 +441,63 @@ export function EvaluationsPage() {
         initialSuite={seedSuite}
       />
     </div>
+  );
+}
+
+function FilterDropdown({
+  icon,
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  const selected = options.find((o) => o.value === value)?.label;
+  const active = value !== "all";
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={cn(
+            "h-9 gap-1.5 rounded-[10px]",
+            active && "border-primary bg-accent text-accent-foreground",
+          )}
+        >
+          {icon}
+          <span>{label}</span>
+          {active && (
+            <span className="max-w-[90px] truncate text-muted-foreground">
+              {selected}
+            </span>
+          )}
+          <ChevronDown data-icon="inline-end" className="opacity-60" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-48 p-1.5">
+        <DropdownMenuLabel className="px-2 py-1.5">{label}</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup value={value} onValueChange={onChange}>
+          {options.map((o) => (
+            <DropdownMenuRadioItem
+              key={o.value}
+              value={o.value}
+              className="rounded-md py-1.5 pr-8 pl-2"
+            >
+              {o.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

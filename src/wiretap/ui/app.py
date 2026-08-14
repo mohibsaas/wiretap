@@ -26,12 +26,7 @@ from wiretap.services.onboard import (
 from wiretap.services.secrets import key_status, load_dotenv, upsert_secrets
 from wiretap.services.simulations import get_simulation_detail, list_simulations
 from wiretap.services.suites import (
-    AddSuiteCaseBody,
-    CreateSuiteBody,
     UpdateSuiteBody,
-    add_suite_case,
-    create_blank_suite,
-    delete_suite,
     get_suite,
     list_suites,
     suite_public_dict,
@@ -315,23 +310,6 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
     def api_list_suites() -> list[dict[str, Any]]:
         return list_suites(cwd)
 
-    @app.post("/api/suites")
-    def api_create_suite(body: CreateSuiteBody) -> dict[str, Any]:
-        """Create a blank suite; cases are added later on the detail page."""
-        try:
-            suite = create_blank_suite(
-                name=body.name,
-                title=body.title,
-                agent_from=body.agent_from,
-                cwd=cwd,
-            )
-            stem = validate_suite_name(body.name)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        except ValidationError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        return suite_public_dict(suite, name=stem)
-
     @app.get("/api/suites/{name}")
     def api_get_suite(name: str) -> dict[str, Any]:
         try:
@@ -345,7 +323,7 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
 
     @app.put("/api/suites/{name}")
     def api_update_suite(name: str, body: UpdateSuiteBody) -> dict[str, Any]:
-        """Update suite title and/or editable test-case rows in suite YAML."""
+        """Update editable test-case rows (persona + scenario fields) in suite YAML."""
         try:
             stem = validate_suite_name(name)
             suite = update_suite_cases(stem, body, cwd)
@@ -356,30 +334,6 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
         except ValidationError as exc:
             raise HTTPException(400, str(exc)) from exc
         return suite_public_dict(suite, name=stem)
-
-    @app.post("/api/suites/{name}/cases")
-    def api_add_suite_case(name: str, body: AddSuiteCaseBody) -> dict[str, Any]:
-        """Append one test case (persona + scenario) to a suite."""
-        try:
-            stem = validate_suite_name(name)
-            suite = add_suite_case(stem, body, cwd)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        except FileNotFoundError as exc:
-            raise HTTPException(404, str(exc)) from exc
-        except ValidationError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        return suite_public_dict(suite, name=stem)
-
-    @app.delete("/api/suites/{name}")
-    def api_delete_suite(name: str) -> dict[str, Any]:
-        """Delete a suite YAML and its companion agent graph, if any."""
-        try:
-            return delete_suite(name, cwd)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        except FileNotFoundError as exc:
-            raise HTTPException(404, str(exc)) from exc
 
     @app.post("/api/batches")
     async def api_start_batch(body: StartBatchBody) -> dict[str, str]:

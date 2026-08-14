@@ -78,26 +78,12 @@ ProgressCallback = Callable[[dict[str, Any]], None]
 def list_categories() -> list[dict[str, Any]]:
     out = []
     for key, meta in CATEGORY_CATALOG.items():
-        examples_raw = meta.get("examples") or []
-        examples: list[dict[str, str]] = []
-        for ex in examples_raw:
-            if not isinstance(ex, dict):
-                continue
-            examples.append(
-                {
-                    "name": str(ex.get("name") or "").strip(),
-                    "identity": str(ex.get("identity") or "").strip(),
-                    "goal": str(ex.get("goal") or "").strip(),
-                    "say": str(ex.get("say") or "").strip(),
-                }
-            )
         out.append(
             {
                 "id": key,
                 "label": meta["label"],
                 "description": meta["description"],
                 "max_tests": MAX_TESTS_PER_CATEGORY,
-                "examples": examples,
             }
         )
     return out

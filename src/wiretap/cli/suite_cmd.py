@@ -1,4 +1,4 @@
-"""suite list | show | path | delete | generate | categories."""
+"""suite list | show | path | generate | categories."""
 
 from __future__ import annotations
 
@@ -54,7 +54,6 @@ def register(app: typer.Typer) -> None:
             expand=True,
         )
         table.add_column("Name", style=f"bold {ui.ACCENT}")
-        table.add_column("Title", overflow="fold")
         table.add_column("Platform", style=ui.MUTED)
         table.add_column("Agent", overflow="fold")
         table.add_column("Scenarios", justify="right")
@@ -63,13 +62,12 @@ def register(app: typer.Typer) -> None:
                 cfg = load_suite(f)
                 table.add_row(
                     f.stem,
-                    (cfg.title or "").strip() or "—",
                     str(cfg.agent.platform or "custom"),
                     str(cfg.agent.agent_id or "—"),
                     str(len(cfg.scenarios)),
                 )
             except Exception:
-                table.add_row(f.stem, "—", "—", "—", "?")
+                table.add_row(f.stem, "—", "—", "?")
         ui.console.print(table)
 
     @suite_app.command("path")
@@ -78,40 +76,6 @@ def register(app: typer.Typer) -> None:
         from wiretap.paths import suite_path
 
         print(suite_path(name))
-
-    @suite_app.command("delete")
-    def suite_delete(
-        name: str = typer.Argument(..., help="Suite id (file stem) to delete."),
-        yes: bool = typer.Option(
-            False,
-            "--yes",
-            "-y",
-            help="Skip confirmation prompt.",
-        ),
-    ) -> None:
-        """Delete a local suite YAML and its agent graph IR."""
-        from wiretap.cli import style as ui
-        from wiretap.services.suites import delete_suite
-
-        stem = name.strip()
-        if not yes:
-            confirm = typer.confirm(
-                f"Delete suite {stem!r}? This cannot be undone.",
-                default=False,
-            )
-            if not confirm:
-                raise typer.Abort()
-        try:
-            result = delete_suite(stem)
-        except FileNotFoundError as exc:
-            print(f"[red]{exc}[/red]")
-            raise typer.Exit(1) from exc
-        except ValueError as exc:
-            print(f"[red]{exc}[/red]")
-            raise typer.Exit(1) from exc
-        ui.ok(f"Deleted [{ui.ACCENT}]{result['name']}[/{ui.ACCENT}]")
-        for path in result.get("removed") or []:
-            print(f"  [dim]removed[/dim] {path}")
 
     @suite_app.command("show")
     def suite_show(

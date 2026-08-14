@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "wiretap": {
+      "command": "uv",
+      "args": ["run", "--project", ".", "wiretap-mcp"]
+    }
+  }
+}

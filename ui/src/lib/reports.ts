@@ -380,15 +380,15 @@ export function badgePackSvg(report: ReportView): string {
     .map((b, i) => {
       const x = 20 + i * (w + gap);
       const on = b.met;
-      const fill = on ? "#0A9551" : "#E4E3DF";
+      const fill = on ? "#056938" : "#E4E3DF";
       const name = escapeXml(b.name);
       const value = b.locked || b.value == null ? "—" : String(b.value);
       return `<g transform="translate(${x},20)">
-  <rect width="${w}" height="${h}" rx="16" fill="${on ? "#FFFFFF" : "#F9F8F6"}" stroke="${on ? "#0A9551" : "#D8D6D1"}"/>
+  <rect width="${w}" height="${h}" rx="16" fill="${on ? "#FFFFFF" : "#F9F8F6"}" stroke="${on ? "#056938" : "#D8D6D1"}"/>
   <rect width="${w}" height="36" rx="16" fill="${fill}"/>
   <rect y="20" width="${w}" height="16" fill="${fill}"/>
   <text x="${w / 2}" y="24" text-anchor="middle" fill="${on ? "#FFFFFF" : "#8A8984"}" font-family="system-ui,sans-serif" font-size="11" font-weight="600" letter-spacing="2">WIRETAP</text>
-  <text x="${w / 2}" y="110" text-anchor="middle" fill="${on ? "#0A9551" : "#8A8984"}" font-family="system-ui,sans-serif" font-size="16" font-weight="600">${name}</text>
+  <text x="${w / 2}" y="110" text-anchor="middle" fill="${on ? "#056938" : "#8A8984"}" font-family="system-ui,sans-serif" font-size="16" font-weight="600">${name}</text>
   <text x="${w / 2}" y="160" text-anchor="middle" fill="#292927" font-family="ui-monospace,monospace" font-size="36" font-weight="600">${value}</text>
   <text x="${w / 2}" y="190" text-anchor="middle" fill="#8A8984" font-family="system-ui,sans-serif" font-size="11" font-weight="600" letter-spacing="1.5">${escapeXml(report.period.toUpperCase())}</text>
 </g>`;

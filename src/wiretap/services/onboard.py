@@ -555,10 +555,7 @@ def list_agents(cwd: Path | None = None) -> list[dict[str, Any]]:
                 "suite": s["name"],
                 "platform": suite.agent.platform,
                 "transport": suite.agent.transport.value,
-                "name": (suite.title or "").strip()
-                or agent_id
-                or s.get("title")
-                or s["name"],
+                "name": agent_id or s["name"],
                 "scenario_count": s.get("scenario_count"),
                 "token_env": suite.agent.token_env,
             }
