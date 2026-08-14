@@ -16,6 +16,8 @@ import { EvaluationsPage } from "@/pages/EvaluationsPage";
 import { HomeRedirect } from "@/pages/HomeRedirect";
 import { OnboardGate } from "@/pages/OnboardGate";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { ReportDetailPage } from "@/pages/ReportDetailPage";
+import { ReportsPage } from "@/pages/ReportsPage";
 import { SimulationDetailPage } from "@/pages/SimulationDetailPage";
 import { SuiteDetailPage } from "@/pages/SuiteDetailPage";
 import { SuitesPage } from "@/pages/SuitesPage";
@@ -44,6 +46,8 @@ export default function App() {
             <Route element={<AppShell />}>
               <Route index element={<HomeRedirect />} />
               <Route path="dashboard" element={<DashboardPage />} />
+              <Route path="reports" element={<ReportsPage />} />
+              <Route path="reports/:batchId" element={<ReportDetailPage />} />
               <Route path="agents" element={<AgentsPage />} />
               <Route path="suites" element={<SuitesPage />} />
               <Route path="categories" element={<CategoriesPage />} />
