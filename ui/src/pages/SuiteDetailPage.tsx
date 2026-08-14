@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Pencil } from "lucide-react";
+import { Pencil, Plus } from "lucide-react";
 import { SuiteCasesTable } from "@/components/SuiteCasesTable";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,12 @@ export function SuiteDetailPage() {
   const displayTitle =
     (suite?.title || "").trim() || suite?.name || name;
 
+  function applySuite(s: SuiteDetail) {
+    setSuite(s);
+    setRows(suiteCaseRows(s));
+    setTitleDraft((s.title || "").trim() || s.name);
+  }
+
   useEffect(() => {
     setSuite(null);
     setRows([]);
@@ -37,11 +43,7 @@ export function SuiteDetailPage() {
     setEditingTitle(false);
     client
       .suite(name)
-      .then((s) => {
-        setSuite(s);
-        setRows(suiteCaseRows(s));
-        setTitleDraft((s.title || "").trim() || s.name);
-      })
+      .then(applySuite)
       .catch((e: Error) => setError(e.message));
   }, [name]);
 
@@ -81,8 +83,7 @@ export function SuiteDetailPage() {
     setError(null);
     try {
       const updated = await client.updateSuite(name, { title: next });
-      setSuite(updated);
-      setTitleDraft((updated.title || "").trim() || updated.name);
+      applySuite(updated);
       setEditingTitle(false);
       setSaved(true);
     } catch (e) {
@@ -111,12 +112,40 @@ export function SuiteDetailPage() {
           rubric: r.rubric,
         })),
       });
-      setSuite(updated);
-      setRows(suiteCaseRows(updated));
-      setTitleDraft((updated.title || "").trim() || updated.name);
+      applySuite(updated);
       setDirty(false);
       setEditing(false);
       setSaved(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addCase() {
+    if (dirty && editing) {
+      const ok = window.confirm(
+        "You have unsaved edits. Save them before adding a new case?",
+      );
+      if (ok) {
+        await save();
+      } else {
+        return;
+      }
+    }
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const updated = await client.addSuiteCase(name, {
+        name: `New test case ${(suite?.scenarios.length || 0) + 1}`,
+        identity: "A caller exercising this suite",
+        goal: "Complete the stated task with the agent",
+      });
+      applySuite(updated);
+      setEditing(true);
+      setDirty(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -199,26 +228,31 @@ export function SuiteDetailPage() {
                 )}
             </p>
           </div>
-          {editing ? (
-            <div className="flex shrink-0 items-center gap-2">
-              <Button variant="outline" onClick={cancelEdit} disabled={busy}>
-                Cancel
+          <div className="flex shrink-0 items-center gap-2">
+            {editing ? (
+              <>
+                <Button variant="outline" onClick={cancelEdit} disabled={busy}>
+                  Cancel
+                </Button>
+                <Button onClick={() => void save()} disabled={busy || !dirty}>
+                  {busy ? "Saving…" : "Save"}
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={startEdit}
+                disabled={!suite || rows.length === 0}
+              >
+                <Pencil data-icon="inline-start" className="size-3.5" />
+                Edit
               </Button>
-              <Button onClick={save} disabled={busy || !dirty}>
-                {busy ? "Saving…" : "Save"}
-              </Button>
-            </div>
-          ) : (
-            <Button
-              variant="outline"
-              onClick={startEdit}
-              disabled={!suite}
-              className="shrink-0"
-            >
-              <Pencil data-icon="inline-start" className="size-3.5" />
-              Edit
+            )}
+            <Button onClick={() => void addCase()} disabled={!suite || busy}>
+              <Plus data-icon="inline-start" className="size-3.5" />
+              Add test
             </Button>
-          )}
+          </div>
         </div>
       </div>
 

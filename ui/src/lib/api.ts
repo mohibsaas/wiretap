@@ -392,6 +392,15 @@ export const client = {
     }),
   agents: () => api<AgentRow[]>("/api/agents"),
   suites: () => api<SuiteSummary[]>("/api/suites"),
+  createSuite: (body: {
+    name: string;
+    title?: string;
+    agent_from?: string | null;
+  }) =>
+    api<SuiteDetail>("/api/suites", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   suite: (name: string) => api<SuiteDetail>(`/api/suites/${encodeURIComponent(name)}`),
   updateSuite: (
     name: string,
@@ -399,6 +408,24 @@ export const client = {
   ) =>
     api<SuiteDetail>(`/api/suites/${encodeURIComponent(name)}`, {
       method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  addSuiteCase: (
+    name: string,
+    body: {
+      name?: string;
+      category?: string | null;
+      identity?: string;
+      goal?: string;
+      constraints?: string[];
+      max_turns?: number;
+      success_criteria?: string;
+      rubric?: string;
+      opening?: string;
+    },
+  ) =>
+    api<SuiteDetail>(`/api/suites/${encodeURIComponent(name)}/cases`, {
+      method: "POST",
       body: JSON.stringify(body),
     }),
   deleteSuite: (name: string) =>

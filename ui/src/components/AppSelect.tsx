@@ -58,7 +58,7 @@ export function AppSelect({
         id={id}
         aria-label={ariaLabel}
         className={cn(
-          "h-10 w-full min-w-0 rounded-[10px] border-input bg-card text-sm",
+          "h-10 w-full min-w-0 rounded-[10px] border-input bg-card font-sans text-[13px]",
           mono && "font-mono",
           triggerClassName,
         )}
@@ -68,7 +68,8 @@ export function AppSelect({
       <SelectContent
         position="popper"
         className={cn(
-          "max-h-72 min-w-[var(--radix-select-trigger-width)] p-1.5",
+          "max-h-72 min-w-[var(--radix-select-trigger-width)] p-1.5 font-sans text-[13px]",
+          mono && "font-mono",
           contentClassName,
         )}
       >
@@ -77,7 +78,10 @@ export function AppSelect({
             key={o.value}
             value={o.value}
             disabled={o.disabled}
-            className={cn("rounded-md py-1.5 pr-8 pl-2 text-sm", mono && "font-mono")}
+            className={cn(
+              "rounded-md py-1.5 pr-8 pl-2 font-sans text-[13px]",
+              mono && "font-mono",
+            )}
           >
             {o.label}
           </SelectItem>

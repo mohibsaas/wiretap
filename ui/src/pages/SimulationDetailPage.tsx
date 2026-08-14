@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Check,
   ChevronDown,
+  ChevronsLeftRight,
   Copy,
   FileText,
   FlaskConical,
@@ -37,6 +38,104 @@ const TARGET_LABELS: Record<string, string> = {
   voice_runtime: "Voice config",
   test_suite: "Test suite",
 };
+
+function formatToolArgs(args: Record<string, unknown> | undefined): string {
+  const entries = Object.entries(args ?? {});
+  if (!entries.length) return "{}";
+  const parts = entries.map(([k, v]) => {
+    let rendered: string;
+    try {
+      rendered = JSON.stringify(v);
+    } catch {
+      rendered = String(v);
+    }
+    return `${k}: ${rendered}`;
+  });
+  return `{ ${parts.join(", ")} }`;
+}
+
+function formatToolOut(summary: string | undefined): string {
+  const s = (summary || "").trim();
+  return s || "—";
+}
+
+/** Matches Wiretap.dc.html tool-call card in the transcript stream. */
+function ToolRow({
+  call,
+  active,
+  onSeek,
+}: {
+  call: ToolCall;
+  active?: boolean;
+  onSeek?: () => void;
+}) {
+  const ok = call.status === "ok";
+  const errored = call.status === "error";
+  const statusLabel = ok ? "ok" : errored ? "error" : call.status || "unknown";
+  const clock =
+    call.at_seconds != null && Number.isFinite(call.at_seconds)
+      ? formatClock(call.at_seconds)
+      : null;
+
+  return (
+    <div className="flex items-start gap-3">
+      <button
+        type="button"
+        disabled={!onSeek && clock == null}
+        className={cn(
+          "mt-2.5 w-[38px] shrink-0 bg-transparent text-right font-mono text-[11.5px] transition-colors",
+          active
+            ? "text-[var(--wt-green-700)]"
+            : "text-[var(--wt-text-muted)] hover:text-foreground",
+          !onSeek && "cursor-default hover:text-[var(--wt-text-muted)]",
+        )}
+        onClick={onSeek}
+      >
+        {clock ?? "—"}
+      </button>
+      <div
+        className={cn(
+          "min-w-0 flex-1 rounded-xl border px-4 py-3",
+          "border-border bg-[var(--wt-section)]",
+          active && "border-[var(--wt-green-600)]",
+        )}
+      >
+        <div className="flex items-center gap-2.5">
+          <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-border bg-card text-muted-foreground">
+            <ChevronsLeftRight className="size-3" strokeWidth={1.9} />
+          </span>
+          <span className="min-w-0 truncate font-mono text-[12.5px] font-medium text-foreground">
+            {call.name}
+          </span>
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center rounded-full border bg-card px-2 py-0.5 font-mono text-[10.5px] font-semibold tracking-[0.04em] uppercase",
+              errored
+                ? "border-[var(--wt-danger)] text-[var(--wt-danger)]"
+                : "border-border text-muted-foreground",
+            )}
+          >
+            {statusLabel}
+          </span>
+        </div>
+        <div className="mt-2.5 ml-[34px] flex flex-col gap-1 font-mono text-[11.5px] leading-snug break-words text-muted-foreground">
+          <div>
+            <span className="text-[var(--wt-text-muted)]">args </span>
+            <span className="text-foreground/80">
+              {formatToolArgs(call.arguments)}
+            </span>
+          </div>
+          <div>
+            <span className="text-[var(--wt-text-muted)]">out&nbsp;&nbsp;</span>
+            <span className="text-foreground/80">
+              {formatToolOut(call.result_summary)}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const SEVERITY_VARIANT: Record<string, "fail" | "warn" | "muted"> = {
   high: "fail",
@@ -233,53 +332,6 @@ function ImprovementsPanel({
   );
 }
 
-function ToolRow({ call }: { call: ToolCall }) {
-  const [open, setOpen] = useState(false);
-  const args = Object.entries(call.arguments ?? {});
-  const variant =
-    call.status === "ok" ? "pass" : call.status === "error" ? "fail" : "warn";
-  return (
-    <div className="ml-[50px] border-l-2 border-border pl-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-          tool
-        </span>
-        <code className="font-mono text-xs">{call.name}</code>
-        <Badge variant={variant}>{call.status}</Badge>
-        {call.at_seconds !== null && call.at_seconds !== undefined && (
-          <span className="text-[11px] text-muted-foreground">
-            {call.at_seconds.toFixed(1)}s
-          </span>
-        )}
-        {args.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setOpen(!open)}
-            className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
-          >
-            {open ? "hide arguments" : "arguments"}
-          </button>
-        )}
-      </div>
-      {open && args.length > 0 && (
-        <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted-foreground">
-          {args.map(([k, v]) => (
-            <div key={k} className="contents">
-              <dt>{k}</dt>
-              <dd className="break-all">{String(v)}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-      {call.result_summary && (
-        <p className="mt-1 font-mono text-[11px] text-muted-foreground break-all">
-          {call.result_summary}
-        </p>
-      )}
-    </div>
-  );
-}
-
 export function SimulationDetailPage() {
   const navigate = useNavigate();
   const { simulationId = "", batchId = "" } = useParams();
@@ -289,6 +341,7 @@ export function SimulationDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTurn, setActiveTurn] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showTools, setShowTools] = useState(true);
   const [audioDuration, setAudioDuration] = useState(0);
   const [seekRequest, setSeekRequest] = useState<{ sec: number; token: number } | null>(
     null,
@@ -369,6 +422,7 @@ export function SimulationDetailPage() {
   }, [advice, sim]);
 
   const turnCount = sim?.transcript?.length || 0;
+  const toolCount = sim?.tool_calls?.length ?? 0;
   const agentLabel =
     (sim?.meta?.agent_name as string | undefined) ||
     (sim?.meta?.agent_id as string | undefined) ||
@@ -456,6 +510,13 @@ export function SimulationDetailPage() {
     }));
   }
 
+  function jumpToSeconds(sec: number) {
+    setSeekRequest((prev) => ({
+      sec,
+      token: (prev?.token ?? 0) + 1,
+    }));
+  }
+
   if (!sim && !error) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
@@ -516,13 +577,13 @@ export function SimulationDetailPage() {
                 <span className="shrink-0">Agent tested</span>
                 <TruncatedText
                   text={agentLabel}
-                  className="max-w-[min(280px,40vw)] font-semibold text-foreground"
+                  className="max-w-[min(280px,40vw)] font-medium text-[var(--wt-text-secondary)]"
                 />
                 <span className="shrink-0 text-border">·</span>
                 <span className="shrink-0">persona</span>
                 <TruncatedText
                   text={callerLabel}
-                  className="max-w-[min(200px,30vw)] font-medium text-foreground"
+                  className="max-w-[min(200px,30vw)] font-medium text-[var(--wt-text-secondary)]"
                 />
                 {sim.simulation_id && (
                   <>
@@ -620,41 +681,59 @@ export function SimulationDetailPage() {
           <div className="flex min-h-0 w-full max-w-[1148px] gap-7">
             <div className="flex min-h-0 min-w-0 max-w-[820px] flex-1 flex-col">
               <div className="mb-3.5 flex shrink-0 flex-wrap items-center justify-between gap-3">
-                {findings.items.length > 0 ? (
-                  <Tabs
-                    value={view}
-                    onValueChange={(v) =>
-                      setView(v as "transcript" | "improvements")
-                    }
-                    className="gap-0"
-                  >
-                    <TabsList className="box-border flex h-9 items-center gap-0.5 rounded-xl bg-[var(--wt-section)] p-[3px] text-foreground">
-                      <TabsTrigger value="transcript" className={segmentTabClass}>
-                        Transcript
-                      </TabsTrigger>
-                      <TabsTrigger
-                        value="improvements"
-                        className={segmentTabClass}
-                      >
-                        Improvements
-                        <Badge
-                          variant={view === "improvements" ? "default" : "muted"}
-                          className="ml-1.5 h-[18px] min-w-[18px] rounded-full px-1.5 text-[10.5px]"
+                <div className="flex flex-wrap items-baseline gap-2.5">
+                  {findings.items.length > 0 ? (
+                    <Tabs
+                      value={view}
+                      onValueChange={(v) =>
+                        setView(v as "transcript" | "improvements")
+                      }
+                      className="gap-0"
+                    >
+                      <TabsList className="box-border flex h-9 items-center gap-0.5 rounded-xl bg-[var(--wt-section)] p-[3px] text-foreground">
+                        <TabsTrigger value="transcript" className={segmentTabClass}>
+                          Transcript
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="improvements"
+                          className={segmentTabClass}
                         >
-                          {findings.items.length}
-                        </Badge>
-                      </TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                ) : (
-                  <h2 className="shrink-0 text-[15px] font-semibold">
-                    Transcript
-                  </h2>
-                )}
-                {view === "transcript" && (
-                  <span className="font-mono text-xs text-[var(--wt-text-muted)]">
-                    {turnCount} turns
-                  </span>
+                          Improvements
+                          <Badge
+                            variant={view === "improvements" ? "default" : "muted"}
+                            className="ml-1.5 h-[18px] min-w-[18px] rounded-full px-1.5 text-[10.5px]"
+                          >
+                            {findings.items.length}
+                          </Badge>
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                  ) : (
+                    <h2 className="shrink-0 text-[15px] font-semibold">
+                      Transcript
+                    </h2>
+                  )}
+                  {view === "transcript" && (
+                    <span className="font-mono text-xs text-[var(--wt-text-muted)]">
+                      {turnCount} turns
+                      {toolCount > 0 ? ` · ${toolCount} tool calls` : ""}
+                    </span>
+                  )}
+                </div>
+                {view === "transcript" && toolCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowTools((v) => !v)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-medium transition-colors",
+                      showTools
+                        ? "border-[var(--wt-green-600)] bg-[var(--wt-green-100)] text-[var(--wt-green-700)]"
+                        : "border-border bg-card text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <ChevronsLeftRight className="size-3" strokeWidth={1.9} />
+                    Tool calls
+                  </button>
                 )}
               </div>
 
@@ -685,9 +764,18 @@ export function SimulationDetailPage() {
                     const showClock = start != null && end != null;
                     return (
                       <div key={`${t.role}-${i}`} className="space-y-2.5">
-                        {(tools.byTurn.get(i) ?? []).map((call, n) => (
-                          <ToolRow key={`${call.name}-${i}-${n}`} call={call} />
-                        ))}
+                        {showTools &&
+                          (tools.byTurn.get(i) ?? []).map((call, n) => (
+                            <ToolRow
+                              key={`${call.name}-${i}-${n}`}
+                              call={call}
+                              onSeek={
+                                call.at_seconds != null
+                                  ? () => jumpToSeconds(call.at_seconds!)
+                                  : undefined
+                              }
+                            />
+                          ))}
                         <div className="flex items-start gap-3">
                         <button
                           type="button"
@@ -740,16 +828,33 @@ export function SimulationDetailPage() {
                     );
                   })
                 )}
-                {(tools.byTurn.get(tools.total) ?? []).map((call, n) => (
-                  <ToolRow key={`tail-${call.name}-${n}`} call={call} />
-                ))}
-                {tools.unplaced.length > 0 && (
-                  <div className="space-y-2 pt-1">
-                    <p className="text-[12px] text-muted-foreground">
+                {showTools &&
+                  (tools.byTurn.get(tools.total) ?? []).map((call, n) => (
+                    <ToolRow
+                      key={`tail-${call.name}-${n}`}
+                      call={call}
+                      onSeek={
+                        call.at_seconds != null
+                          ? () => jumpToSeconds(call.at_seconds!)
+                          : undefined
+                      }
+                    />
+                  ))}
+                {showTools && tools.unplaced.length > 0 && (
+                  <div className="space-y-2.5 pt-1">
+                    <p className="pl-[50px] text-[12px] text-muted-foreground">
                       Tool calls with no known position in the transcript:
                     </p>
                     {tools.unplaced.map((call, n) => (
-                      <ToolRow key={`unplaced-${call.name}-${n}`} call={call} />
+                      <ToolRow
+                        key={`unplaced-${call.name}-${n}`}
+                        call={call}
+                        onSeek={
+                          call.at_seconds != null
+                            ? () => jumpToSeconds(call.at_seconds!)
+                            : undefined
+                        }
+                      />
                     ))}
                   </div>
                 )}

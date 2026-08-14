@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
-import { Navigate, Outlet } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { client } from "@/lib/api";
 
-/** Main app: only after onboarding is done (or suites already exist). */
+/**
+ * Until first-run setup completes, keep the user on the dashboard where the
+ * onboarding modal opens over the blurred shell.
+ */
 export function RequireOnboarded() {
+  const location = useLocation();
   const [ready, setReady] = useState(false);
   const [needs, setNeeds] = useState(false);
 
@@ -18,7 +22,7 @@ export function RequireOnboarded() {
         setNeeds(false);
         setReady(true);
       });
-  }, []);
+  }, [location.pathname]);
 
   if (!ready) {
     return (
@@ -27,8 +31,13 @@ export function RequireOnboarded() {
       </div>
     );
   }
-  if (needs) {
-    return <Navigate to="/onboard" replace />;
+
+  const onDashboard =
+    location.pathname === "/" || location.pathname === "/dashboard";
+
+  if (needs && !onDashboard) {
+    return <Navigate to="/" replace />;
   }
+
   return <Outlet />;
 }

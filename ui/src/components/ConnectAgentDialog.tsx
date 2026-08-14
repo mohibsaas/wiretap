@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { client, type OnboardStatus } from "@/lib/api";
+import {
+  AppModal,
+  modalFieldClass,
+  modalFieldsClass,
+  modalHintClass,
+  modalInputClass,
+  modalLabelClass,
+} from "@/components/AppModal";
 import { AppSelect } from "@/components/AppSelect";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 const PLATFORMS = [
   { value: "retell", label: "Retell" },
@@ -199,188 +200,14 @@ export function ConnectAgentDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-0 overflow-hidden rounded-[18px] border-border p-0 shadow-[0_30px_80px_-20px_rgba(41,41,39,0.28)] sm:max-w-[480px]">
-        <div className="flex min-w-0 flex-col gap-4 p-6 pb-4">
-          <DialogHeader>
-            <DialogTitle className="text-base font-semibold tracking-[-0.01em]">
-              Connect agent
-            </DialogTitle>
-            <DialogDescription className="text-[13px] leading-relaxed">
-              Link a live voice agent. Keys stay in the local secret store —
-              never shown again.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex min-w-0 flex-col gap-3.5">
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <Label htmlFor="connect-platform">Platform</Label>
-              <AppSelect
-                id="connect-platform"
-                value={platform}
-                onValueChange={(next) => {
-                  setPlatform(next);
-                  setApiKey("");
-                  setApiSecret("");
-                  setRemoteAgents(null);
-                  setAgentId("");
-                  void refreshAgents(next);
-                }}
-                options={[...PLATFORMS]}
-              />
-            </div>
-
-            {showRoomUrl ? (
-              <div className="flex min-w-0 flex-col gap-1.5">
-                <Label htmlFor="connect-room">LiveKit URL</Label>
-                <Input
-                  id="connect-room"
-                  className="h-10 rounded-[10px]"
-                  value={roomUrl}
-                  onChange={(e) => setRoomUrl(e.target.value)}
-                  placeholder="wss://your-project.livekit.cloud"
-                  autoComplete="off"
-                />
-              </div>
-            ) : null}
-
-            {platformNeedsKey ? (
-              <>
-                {showPlatformKey ? (
-                  <div className="flex min-w-0 flex-col gap-1.5">
-                    <Label htmlFor="connect-key">{platformKeyEnv}</Label>
-                    <Input
-                      id="connect-key"
-                      type="password"
-                      autoComplete="off"
-                      className="h-10 rounded-[10px] font-mono text-sm"
-                      placeholder="API key"
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      onBlur={() => {
-                        if (apiKey.trim()) void refreshAgents(platform, apiKey);
-                      }}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Blur the field after entering a key to load agents.
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Using existing {platformKeyEnv} from .env
-                  </p>
-                )}
-
-                {showLivekitSecret ? (
-                  <div className="flex min-w-0 flex-col gap-1.5">
-                    <Label htmlFor="connect-secret">LIVEKIT_API_SECRET</Label>
-                    <Input
-                      id="connect-secret"
-                      type="password"
-                      autoComplete="off"
-                      className="h-10 rounded-[10px] font-mono text-sm"
-                      placeholder="API secret"
-                      value={apiSecret}
-                      onChange={(e) => setApiSecret(e.target.value)}
-                    />
-                  </div>
-                ) : null}
-
-                <div className="flex min-w-0 flex-col gap-1.5">
-                  <Label htmlFor="connect-agent">
-                    {platform === "livekit"
-                      ? "Room name"
-                      : platform === "synthflow"
-                        ? "Model / assistant ID"
-                        : "Agent"}
-                  </Label>
-                  {agentsLoading && supportsLiveAgents ? (
-                    <AppSelect
-                      id="connect-agent"
-                      disabled
-                      value="__loading__"
-                      onValueChange={() => {}}
-                      placeholder="Loading…"
-                      options={[
-                        {
-                          value: "__loading__",
-                          label: "Loading…",
-                          disabled: true,
-                        },
-                      ]}
-                    />
-                  ) : remoteAgents && remoteAgents.length > 0 ? (
-                    <AppSelect
-                      id="connect-agent"
-                      value={
-                        remoteAgents.some((a) => a.id === agentId)
-                          ? agentId
-                          : "__custom__"
-                      }
-                      onValueChange={(v) => {
-                        if (v === "__custom__") {
-                          setAgentId("");
-                          return;
-                        }
-                        setAgentId(v);
-                      }}
-                      options={[
-                        ...remoteAgents.map((a) => ({
-                          value: a.id,
-                          label: a.name,
-                        })),
-                        { value: "__custom__", label: "Paste custom id…" },
-                      ]}
-                    />
-                  ) : null}
-                  {!agentsLoading &&
-                    (!remoteAgents?.length ||
-                      !remoteAgents.some((a) => a.id === agentId)) && (
-                      <Input
-                        id={remoteAgents?.length ? undefined : "connect-agent"}
-                        className="h-10 rounded-[10px] text-sm"
-                        value={agentId}
-                        onChange={(e) => setAgentId(e.target.value)}
-                        placeholder={
-                          platform === "livekit"
-                            ? "my-agent-room"
-                            : "agent_xxx"
-                        }
-                      />
-                    )}
-                </div>
-
-                {platform === "bolna" ? (
-                  <p className="text-xs text-muted-foreground">
-                    Bolna import drafts a suite; live phone dial is not wired
-                    yet.
-                  </p>
-                ) : null}
-                {platform === "synthflow" ? (
-                  <p className="text-xs text-muted-foreground">
-                    Live dial also needs SYNTHFLOW_FROM_NUMBER /
-                    SYNTHFLOW_TO_NUMBER in .env.
-                  </p>
-                ) : null}
-              </>
-            ) : (
-              <div className="flex min-w-0 flex-col gap-1.5">
-                <Label htmlFor="connect-name">Name (optional)</Label>
-                <Input
-                  id="connect-name"
-                  className="h-10 rounded-[10px]"
-                  value={agentId}
-                  onChange={(e) => setAgentId(e.target.value)}
-                  placeholder="my-agent"
-                />
-              </div>
-            )}
-
-            {error && <p className="text-sm text-fail">{error}</p>}
-          </div>
-        </div>
-
-        <DialogFooter className="gap-2 rounded-b-[18px] sm:justify-end">
+    <AppModal
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Connect agent"
+      description="Link a live voice agent. Keys stay in the local secret store — never shown again."
+      maxWidthClass="sm:max-w-[480px]"
+      footer={
+        <>
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
@@ -391,8 +218,182 @@ export function ConnectAgentDialog({
           <Button onClick={connect} disabled={busy || !canConnect}>
             {busy ? "Connecting…" : "Connect"}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </>
+      }
+    >
+      <div className={modalFieldsClass}>
+        <div className={modalFieldClass}>
+          <Label htmlFor="connect-platform" className={modalLabelClass}>
+            Platform
+          </Label>
+          <AppSelect
+            id="connect-platform"
+            value={platform}
+            onValueChange={(next) => {
+              setPlatform(next);
+              setApiKey("");
+              setApiSecret("");
+              setRemoteAgents(null);
+              setAgentId("");
+              void refreshAgents(next);
+            }}
+            options={[...PLATFORMS]}
+          />
+        </div>
+
+        {showRoomUrl ? (
+          <div className={modalFieldClass}>
+            <Label htmlFor="connect-room" className={modalLabelClass}>
+              LiveKit URL
+            </Label>
+            <Input
+              id="connect-room"
+              className={modalInputClass}
+              value={roomUrl}
+              onChange={(e) => setRoomUrl(e.target.value)}
+              placeholder="wss://your-project.livekit.cloud"
+              autoComplete="off"
+            />
+          </div>
+        ) : null}
+
+        {platformNeedsKey ? (
+          <>
+            {showPlatformKey ? (
+              <div className={modalFieldClass}>
+                <Label htmlFor="connect-key" className={modalLabelClass}>
+                  {platformKeyEnv}
+                </Label>
+                <Input
+                  id="connect-key"
+                  type="password"
+                  autoComplete="off"
+                  className={cn(modalInputClass, "font-mono")}
+                  placeholder="API key"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  onBlur={() => {
+                    if (apiKey.trim()) void refreshAgents(platform, apiKey);
+                  }}
+                />
+                <p className={modalHintClass}>
+                  Blur the field after entering a key to load agents.
+                </p>
+              </div>
+            ) : (
+              <p className={modalHintClass}>
+                Using existing {platformKeyEnv} from .env
+              </p>
+            )}
+
+            {showLivekitSecret ? (
+              <div className={modalFieldClass}>
+                <Label htmlFor="connect-secret" className={modalLabelClass}>
+                  LIVEKIT_API_SECRET
+                </Label>
+                <Input
+                  id="connect-secret"
+                  type="password"
+                  autoComplete="off"
+                  className={cn(modalInputClass, "font-mono")}
+                  placeholder="API secret"
+                  value={apiSecret}
+                  onChange={(e) => setApiSecret(e.target.value)}
+                />
+              </div>
+            ) : null}
+
+            <div className={modalFieldClass}>
+              <Label htmlFor="connect-agent" className={modalLabelClass}>
+                {platform === "livekit"
+                  ? "Room name"
+                  : platform === "synthflow"
+                    ? "Model / assistant ID"
+                    : "Agent"}
+              </Label>
+              {agentsLoading && supportsLiveAgents ? (
+                <AppSelect
+                  id="connect-agent"
+                  disabled
+                  value="__loading__"
+                  onValueChange={() => {}}
+                  placeholder="Loading…"
+                  options={[
+                    {
+                      value: "__loading__",
+                      label: "Loading…",
+                      disabled: true,
+                    },
+                  ]}
+                />
+              ) : remoteAgents && remoteAgents.length > 0 ? (
+                <AppSelect
+                  id="connect-agent"
+                  value={
+                    remoteAgents.some((a) => a.id === agentId)
+                      ? agentId
+                      : "__custom__"
+                  }
+                  onValueChange={(v) => {
+                    if (v === "__custom__") {
+                      setAgentId("");
+                      return;
+                    }
+                    setAgentId(v);
+                  }}
+                  options={[
+                    ...remoteAgents.map((a) => ({
+                      value: a.id,
+                      label: a.name,
+                    })),
+                    { value: "__custom__", label: "Paste custom id…" },
+                  ]}
+                />
+              ) : null}
+              {!agentsLoading &&
+                (!remoteAgents?.length ||
+                  !remoteAgents.some((a) => a.id === agentId)) && (
+                  <Input
+                    id={remoteAgents?.length ? undefined : "connect-agent"}
+                    className={modalInputClass}
+                    value={agentId}
+                    onChange={(e) => setAgentId(e.target.value)}
+                    placeholder={
+                      platform === "livekit" ? "my-agent-room" : "agent_xxx"
+                    }
+                  />
+                )}
+            </div>
+
+            {platform === "bolna" ? (
+              <p className={modalHintClass}>
+                Bolna import drafts a suite; live phone dial is not wired yet.
+              </p>
+            ) : null}
+            {platform === "synthflow" ? (
+              <p className={modalHintClass}>
+                Live dial also needs SYNTHFLOW_FROM_NUMBER /
+                SYNTHFLOW_TO_NUMBER in .env.
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <div className={modalFieldClass}>
+            <Label htmlFor="connect-name" className={modalLabelClass}>
+              Name (optional)
+            </Label>
+            <Input
+              id="connect-name"
+              className={modalInputClass}
+              value={agentId}
+              onChange={(e) => setAgentId(e.target.value)}
+              placeholder="my-agent"
+            />
+          </div>
+        )}
+
+        {error && <p className="text-sm text-fail">{error}</p>}
+      </div>
+    </AppModal>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Trash2, Plus } from "lucide-react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ConnectAgentDialog } from "@/components/ConnectAgentDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { TruncatedText } from "@/components/TruncatedText";
@@ -51,7 +52,8 @@ export function AgentsPage() {
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<AgentRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   function reload() {
     client
@@ -69,29 +71,28 @@ export function AgentsPage() {
     return `${n} agent${n === 1 ? "" : "s"}`;
   }, [agents.length]);
 
-  async function removeAgent(a: AgentRow) {
-    const suite = a.suite?.trim();
-    if (!suite) {
+  function requestDelete(a: AgentRow) {
+    if (!a.suite?.trim()) {
       setError("This agent has no local suite to delete.");
       return;
     }
-    const label = agentDisplayName(a);
-    if (
-      !window.confirm(
-        `Delete “${label}” and its suite (${suite})? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
-    setDeleting(suite);
+    setPendingDelete(a);
+  }
+
+  async function confirmDelete() {
+    const a = pendingDelete;
+    const suite = a?.suite?.trim();
+    if (!a || !suite) return;
+    setDeleting(true);
     setError(null);
     try {
       await client.deleteSuite(suite);
+      setPendingDelete(null);
       reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setDeleting(null);
+      setDeleting(false);
     }
   }
 
@@ -193,9 +194,9 @@ export function AgentsPage() {
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      disabled={!canDelete || deleting === a.suite}
+                      disabled={!canDelete || deleting}
                       aria-label={`Delete ${name}`}
-                      onClick={() => void removeAgent(a)}
+                      onClick={() => requestDelete(a)}
                     >
                       <Trash2 className="size-4 text-muted-foreground" />
                     </Button>
@@ -211,6 +212,22 @@ export function AgentsPage() {
         open={connectOpen}
         onOpenChange={setConnectOpen}
         onConnected={reload}
+      />
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setPendingDelete(null);
+        }}
+        title="Delete agent?"
+        description={
+          pendingDelete
+            ? `Delete “${agentDisplayName(pendingDelete)}” and its suite (${pendingDelete.suite})? This cannot be undone.`
+            : ""
+        }
+        confirmLabel="Delete"
+        busy={deleting}
+        onConfirm={() => void confirmDelete()}
       />
     </div>
   );

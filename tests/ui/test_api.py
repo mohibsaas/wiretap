@@ -127,6 +127,33 @@ def test_delete_suite(client: TestClient, tmp_path: Path) -> None:
     assert missing.status_code == 404
 
 
+def test_create_blank_suite_and_add_case(client: TestClient, tmp_path: Path) -> None:
+    res = client.post(
+        "/api/suites",
+        json={"name": "manual_suite", "title": "Manual suite"},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["name"] == "manual_suite"
+    assert body["title"] == "Manual suite"
+    assert body["scenarios"] == []
+
+    added = client.post(
+        "/api/suites/manual_suite/cases",
+        json={
+            "name": "Polite cancel",
+            "identity": "A calm caller",
+            "goal": "Cancel the plan",
+            "category": "task",
+        },
+    )
+    assert added.status_code == 200, added.text
+    cases = added.json()["scenarios"]
+    assert len(cases) == 1
+    assert cases[0]["name"] == "Polite cancel"
+    assert cases[0]["category"] == "task"
+
+
 def test_simulations_list_and_get(client: TestClient, tmp_path: Path) -> None:
     art = SimulationArtifact(
         suite_id="default",

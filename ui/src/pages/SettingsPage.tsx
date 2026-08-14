@@ -247,7 +247,7 @@ export function SettingsPage() {
           </p>
         </div>
         <Button asChild variant="outline" className="shrink-0 rounded-[10px]">
-          <Link to="/onboard?again=1">
+          <Link to="/?again=1">
             <RefreshCw data-icon="inline-start" className="size-3.5" />
             Re-run setup wizard
           </Link>
@@ -673,7 +673,7 @@ function SecretInput({
         type="button"
         variant="ghost"
         size="icon-sm"
-        className="absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground"
+        className="absolute top-1.5 right-1.5 text-muted-foreground"
         onClick={() => setShow((s) => !s)}
         aria-label={show ? "Hide key" : "Show key"}
         tabIndex={-1}

@@ -25,7 +25,7 @@ const CATEGORY_TILE: Record<
   operational: { bg: "#E6F0F7", fg: "#2F6B9E", Icon: Settings2 },
   factual: { bg: "#EFF3E6", fg: "#5C7A2E", Icon: BookOpen },
   compliance: { bg: "#F7F0E6", fg: "#8A5B12", Icon: Scale },
-  task: { bg: "#E6EEE7", fg: "#056938", Icon: Check },
+  task: { bg: "#E6EEE7", fg: "#0A9551", Icon: Check },
   other: { bg: "#F2F1EE", fg: "#747370", Icon: Shapes },
 };
 

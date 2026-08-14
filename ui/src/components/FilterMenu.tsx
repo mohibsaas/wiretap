@@ -68,7 +68,7 @@ export function FilterMenu({
             <DropdownMenuRadioItem
               key={o.value}
               value={o.value}
-              className="rounded-md py-1.5 pr-8 pl-2"
+              className="rounded-md py-1.5 pr-8 pl-2 text-sm"
             >
               {o.label}
             </DropdownMenuRadioItem>
