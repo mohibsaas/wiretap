@@ -35,10 +35,10 @@ import {
 import { formatRelative } from "@/lib/format";
 import {
   REPORT_CATEGORIES,
-  badgePackSvg,
   buildReport,
   categoryLabel,
-  downloadText,
+  downloadBadgePack,
+  downloadBadgePng,
   indexSuiteScenarios,
   resolveAgentName,
   scoreBand,
@@ -145,13 +145,13 @@ export function ReportDetailPage() {
     }
   }
 
-  function downloadBadges() {
+  async function downloadBadges() {
     if (!report) return;
-    downloadText(
-      `wiretap-badges-${report.hash}.svg`,
-      badgePackSvg(report),
-      "image/svg+xml",
-    );
+    try {
+      await downloadBadgePack(report);
+    } catch {
+      setError("Could not download the badge pack.");
+    }
   }
 
   if (error && !run) {
@@ -340,25 +340,22 @@ export function ReportDetailPage() {
               Badges
             </div>
             <div className="mt-[7px] mb-[3px] text-[17px] font-semibold">
-              {report.full
-                ? earnedCount
-                  ? `${earnedCount} of 4 badges earned`
-                  : "No badges earned from this run"
-                : "Badges locked"}
+              {earnedCount
+                ? `${earnedCount} of ${REPORT_CATEGORIES.length} badges earned`
+                : "No badges earned from this run"}
             </div>
             <p className="max-w-[620px] text-[12.5px] leading-relaxed text-muted-foreground text-pretty">
-              {report.full
-                ? "Full coverage, so every badge was assessed. Open one to see its validity and the score it was issued against."
-                : `A badge needs one run across all ${REPORT_CATEGORIES.length} categories. This run covered ${report.covered.length} — re-run with the full set to unlock them.`}
+              Pass every simulation in a category to unlock its shield. Open one
+              to see the tests it was issued against.
             </p>
           </div>
-          {report.full && (
+          {earnedCount > 0 && (
             <Button
               type="button"
               variant="ghost"
               size="sm"
               className="shrink-0 rounded-full"
-              onClick={downloadBadges}
+              onClick={() => void downloadBadges()}
             >
               <Download data-icon="inline-start" />
               Download badge pack
@@ -376,7 +373,7 @@ export function ReportDetailPage() {
                 b.met ? "border-primary" : "border-border",
               )}
             >
-              <ReportBadgePlate badge={b} period={report.period} />
+              <ReportBadgePlate badge={b} />
               <div className="min-w-0 flex-1">
                 <div className="mb-1 flex items-center gap-1.5">
                   <span className="text-[13.5px] font-semibold leading-snug">
@@ -384,10 +381,8 @@ export function ReportDetailPage() {
                   </span>
                   {b.met ? (
                     <Check className="size-[13px] shrink-0 text-primary" />
-                  ) : b.locked ? (
-                    <Lock className="size-[13px] shrink-0 text-muted-foreground" />
                   ) : (
-                    <X className="size-[13px] shrink-0 text-muted-foreground" />
+                    <Lock className="size-[13px] shrink-0 text-muted-foreground" />
                   )}
                 </div>
                 <div
@@ -398,14 +393,12 @@ export function ReportDetailPage() {
                       : "text-[var(--wt-text-muted)]",
                   )}
                 >
-                  {b.locked ? "Locked" : b.met ? "Earned" : "Not attained"}
+                  {b.met ? "Earned" : "Locked"}
                 </div>
                 <div className="mt-1 text-[11.5px] leading-snug text-[var(--wt-text-muted)]">
-                  {b.locked
-                    ? `Needs all ${REPORT_CATEGORIES.length} categories`
-                    : b.met
-                      ? `Valid to ${report.expires}`
-                      : `Needs ${b.min}, scored ${b.value}`}
+                  {b.testCount === 0
+                    ? "No tests in this run"
+                    : `${b.passedCount} of ${b.testCount} passed`}
                 </div>
               </div>
             </button>
@@ -597,18 +590,10 @@ export function ReportDetailPage() {
         report={report}
         badge={selectedBadge}
         onCta={() => {
-          if (!selectedBadge) return;
-          if (selectedBadge.locked) {
-            setBadgeId(null);
-            if (report.suiteId) navigate(`/suites/${encodeURIComponent(report.suiteId)}`);
-            return;
-          }
-          if (selectedBadge.met) {
-            downloadBadges();
-            return;
-          }
-          setBadgeId(null);
-          setRerunOpen(true);
+          if (!selectedBadge?.met) return;
+          void downloadBadgePng(selectedBadge).catch(() => {
+            setError("Could not download the badge.");
+          });
         }}
       />
 
@@ -647,21 +632,12 @@ function BadgeModal({
   onCta: () => void;
 }) {
   if (!badge) return null;
-  const ctaLabel = badge.locked
-    ? `Run all ${REPORT_CATEGORIES.length} categories`
-    : badge.met
-      ? "Download badge"
-      : "Re-run this suite";
-  const note = badge.locked
-    ? `Badges are issued from full-coverage runs only. This run covered ${report.covered.length} of ${REPORT_CATEGORIES.length} categories, so nothing can be certified yet — point the suite at every category and re-run.`
-    : badge.met
-      ? "Embed it on your site or drop it in a security review. The badge links back to this report, so anyone can see the run behind it."
-      : "You ran full coverage, so this badge is live — the score just came in under the bar. Fix the flagged checks below and re-run to claim it.";
-  const statusLabel = badge.locked
-    ? "Locked"
-    : badge.met
-      ? `Earned · ${report.issued}`
-      : "Not attained";
+  const note = badge.met
+    ? "Embed it on your site or drop it in a security review. The badge is from this run, so anyone can see the tests behind it."
+    : badge.testCount === 0
+      ? `No ${categoryLabel(badge.cat)} simulations ran in this report, so this shield stays locked.`
+      : `${badge.passedCount} of ${badge.testCount} ${categoryLabel(badge.cat)} simulations passed. Fix the flagged checks and re-run to claim it.`;
+  const statusLabel = badge.met ? `Earned · ${report.issued}` : "Locked";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -683,7 +659,7 @@ function BadgeModal({
           </button>
         </div>
         <div className="flex flex-wrap items-start gap-[26px]">
-          <ReportBadgePlate badge={badge} period={report.period} size="lg" />
+          <ReportBadgePlate badge={badge} size="lg" />
           <div className="min-w-[220px] flex-1">
             <div className="mb-1.5 text-[17px] font-semibold leading-snug">
               {badge.name}
@@ -701,15 +677,18 @@ function BadgeModal({
             <div className="mt-4 flex flex-col">
               {[
                 {
-                  label: badge.cat ? `${categoryLabel(badge.cat)} score` : "Overall score",
+                  label: `${categoryLabel(badge.cat)} score`,
+                  value: badge.value == null ? "Not measured" : String(badge.value),
+                },
+                {
+                  label: "Tests passed",
                   value:
-                    badge.locked || badge.value == null
-                      ? "Not measured"
-                      : String(badge.value),
+                    badge.testCount === 0
+                      ? "None in this run"
+                      : `${badge.passedCount} / ${badge.testCount}`,
                 },
                 { label: "Criteria", value: badge.crit },
                 { label: "Issued", value: badge.met ? report.issued : "—" },
-                { label: "Valid through", value: badge.met ? report.expires : "—" },
                 { label: "From run", value: report.name },
               ].map((row) => (
                 <div
@@ -747,9 +726,11 @@ function BadgeModal({
           >
             Close
           </Button>
-          <Button type="button" size="sm" className="rounded-full" onClick={onCta}>
-            {ctaLabel}
-          </Button>
+          {badge.met && (
+            <Button type="button" size="sm" className="rounded-full" onClick={onCta}>
+              Download badge
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

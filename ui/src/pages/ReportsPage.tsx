@@ -274,7 +274,7 @@ function ReportCard({ report }: { report: ReportView }) {
         </div>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1.5">
-        <ReportBadgeChip full={report.full} earned={earned} />
+        <ReportBadgeChip earned={earned} />
         <span className="font-mono text-[11.5px] text-[var(--wt-text-muted)]">
           {formatRelative(report.createdAt)}
         </span>

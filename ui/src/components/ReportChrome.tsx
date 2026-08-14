@@ -1,6 +1,6 @@
 import { Award, Lock } from "lucide-react";
 import type { ReportBadge, ReportCategoryId, ReportStatus } from "@/lib/reports";
-import { REPORT_CATEGORIES, scoreBand } from "@/lib/reports";
+import { REPORT_CATEGORIES, badgeImageSrc, scoreBand } from "@/lib/reports";
 import { cn } from "@/lib/utils";
 
 export function ReportStatusPill({ status }: { status: ReportStatus }) {
@@ -86,71 +86,26 @@ export function CategorySpark({
 
 export function ReportBadgePlate({
   badge,
-  period,
   size = "sm",
 }: {
   badge: ReportBadge;
-  period: string;
   size?: "sm" | "lg";
 }) {
-  const on = badge.met;
   const wide = size === "lg";
   return (
-    <div
+    <img
+      src={badgeImageSrc(badge)}
+      alt={badge.met ? badge.name : `${badge.name} locked`}
       className={cn(
-        "flex shrink-0 flex-col overflow-hidden",
-        wide ? "h-[186px] w-[148px] rounded-2xl" : "h-[110px] w-[88px] rounded-xl",
-        on
-          ? "border border-primary bg-white"
-          : "border border-border bg-[var(--wt-section)] opacity-70",
+        "shrink-0 object-contain",
+        wide ? "h-[186px] w-[186px]" : "h-[88px] w-[88px]",
       )}
-    >
-      <div
-        className={cn(
-          "shrink-0 text-center font-semibold tracking-[0.16em]",
-          wide ? "py-[9px] text-[9.5px]" : "py-1.5 text-[8px]",
-          on
-            ? "bg-[var(--wt-green-600)] text-white"
-            : "bg-border text-[var(--wt-text-muted)]",
-        )}
-      >
-        WIRETAP
-      </div>
-      <div className="flex flex-1 flex-col items-center justify-center gap-1 px-1.5 py-2 text-center">
-        <div
-          className={cn(
-            "font-semibold leading-tight",
-            wide ? "text-sm" : "text-[9.5px]",
-            on ? "text-[var(--wt-green-700)]" : "text-muted-foreground",
-          )}
-        >
-          {badge.name}
-        </div>
-        <div
-          className={cn(
-            "font-mono font-semibold leading-none tracking-[-0.02em]",
-            wide ? "text-[30px]" : "text-[17px]",
-            on ? "text-foreground" : "text-[var(--wt-text-muted)]",
-          )}
-        >
-          {badge.locked || badge.value == null ? "—" : badge.value}
-        </div>
-        <div className="text-[8px] font-semibold tracking-[0.09em] text-[var(--wt-text-muted)] uppercase">
-          {period}
-        </div>
-      </div>
-    </div>
+    />
   );
 }
 
-export function ReportBadgeChip({
-  full,
-  earned,
-}: {
-  full: boolean;
-  earned: number;
-}) {
-  const on = full && earned > 0;
+export function ReportBadgeChip({ earned }: { earned: number }) {
+  const on = earned > 0;
   return (
     <span
       className={cn(
@@ -160,14 +115,8 @@ export function ReportBadgeChip({
           : "border border-border bg-card text-[var(--wt-text-muted)]",
       )}
     >
-      {full ? (
-        <Award className="size-3" />
-      ) : (
-        <Lock className="size-3" />
-      )}
-      {full
-        ? `${earned} badge${earned === 1 ? "" : "s"}`
-        : "Badges locked"}
+      {on ? <Award className="size-3" /> : <Lock className="size-3" />}
+      {on ? `${earned} badge${earned === 1 ? "" : "s"}` : "No badges"}
     </span>
   );
 }

@@ -195,29 +195,21 @@ export function downloadReportPdf(report: ReportView): void {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(...MUTED);
-  const badgeIntro = report.full
-    ? earned
-      ? `${earned} of 4 badges earned. Full coverage, so every badge was assessed.`
-      : "No badges earned from this run."
-    : `Badges locked. A badge needs one run across all ${REPORT_CATEGORIES.length} categories. This run covered ${report.covered.length}.`;
+  const badgeIntro = earned
+    ? `${earned} of ${REPORT_CATEGORIES.length} badges earned. Pass every simulation in a category to unlock its shield.`
+    : `No badges earned. Pass every simulation in a category to unlock its shield.`;
   doc.text(pdfText(badgeIntro), MARGIN, y);
   y += 12;
 
   autoTable(doc, {
     startY: y,
     margin: { left: MARGIN, right: MARGIN },
-    head: [["Badge", "Status", "Score", "Rule"]],
+    head: [["Badge", "Status", "Tests", "Rule"]],
     body: report.badges.map((b) => [
       pdfText(b.name),
-      b.locked ? "Locked" : b.met ? "Earned" : "Not attained",
-      b.locked || b.value == null ? "—" : String(b.value),
-      pdfText(
-        b.locked
-          ? `Needs all ${REPORT_CATEGORIES.length} categories`
-          : b.met
-            ? `Valid to ${report.expires}`
-            : `Needs ${b.min}, scored ${b.value}`,
-      ),
+      b.met ? "Earned" : "Locked",
+      b.testCount === 0 ? "—" : `${b.passedCount} / ${b.testCount}`,
+      pdfText(b.crit),
     ]),
     theme: "plain",
     headStyles: {
@@ -247,7 +239,7 @@ export function downloadReportPdf(report: ReportView): void {
       if (data.section !== "body" || data.column.index !== 1) return;
       const text = String(data.cell.raw || "");
       if (text === "Earned") data.cell.styles.textColor = GREEN;
-      if (text === "Not attained") data.cell.styles.textColor = DANGER;
+      if (text === "Locked") data.cell.styles.textColor = MUTED;
     },
   });
   y = tableEnd(doc) + 22;
