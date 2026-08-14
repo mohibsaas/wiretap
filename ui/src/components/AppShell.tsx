@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronUp,
   Circle,
+  FileText,
   LayoutGrid,
   Play,
   Settings,
@@ -31,6 +32,7 @@ type NavItem = {
 
 const monitor: NavItem[] = [
   { to: "/", label: "Dashboard", icon: LayoutGrid, end: true },
+  { to: "/reports", label: "Reports", icon: FileText },
 ];
 
 const evaluate: NavItem[] = [
@@ -79,6 +81,7 @@ export function AppShell() {
   const isTranscriptPage = /\/evaluations\/[^/]+\/scenarios\/[^/]+/.test(
     location.pathname,
   );
+  const isReportDetail = /\/reports\/[^/]+/.test(location.pathname);
 
   useEffect(() => {
     void client.onboardStatus().then(setStatus).catch(() => setStatus(null));
@@ -198,7 +201,8 @@ export function AppShell() {
             className={cn(
               "w-full",
               // Transcript / scenario detail uses the full canvas width.
-              !isTranscriptPage && "mx-auto max-w-[1120px]",
+              !isTranscriptPage && !isReportDetail && "mx-auto max-w-[1120px]",
+              isReportDetail && "mx-auto max-w-[1180px]",
             )}
           >
             <Outlet />
