@@ -586,14 +586,29 @@ export function SimulationDetailPage() {
             <Button
               size="sm"
               className="rounded-full"
-              onClick={() => {
-                document
-                  .getElementById("sim-verdict")
-                  ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-              }}
+              asChild={Boolean(backBatch)}
+              disabled={!backBatch}
+              onClick={
+                backBatch
+                  ? undefined
+                  : () => {
+                      document
+                        .getElementById("sim-verdict")
+                        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                    }
+              }
             >
-              <FileText data-icon="inline-start" />
-              View report
+              {backBatch ? (
+                <Link to={`/reports/${encodeURIComponent(backBatch)}`}>
+                  <FileText data-icon="inline-start" />
+                  View report
+                </Link>
+              ) : (
+                <>
+                  <FileText data-icon="inline-start" />
+                  View report
+                </>
+              )}
             </Button>
           </div>
         </div>
