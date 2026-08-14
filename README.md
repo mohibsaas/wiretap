@@ -1,11 +1,15 @@
-# wiretap
+# Wiretap
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-Test your **live** voice agent from the terminal (or a local UI).
+Open-source voice agent testing. Free. Dials your live agent. Not a copy.
 
-Wiretap dials the agent you already run — Retell, Vapi, ElevenLabs, LiveKit, Synthflow, or a phone number — with its own **test agent**, scores the call (rules + LLM judge), and stores results under `~/.wiretap/` (override with `WIRETAP_HOME`).
+You built an AI that talks to customers. You called it a few times. It seemed fine. That is not a real test.
+
+Wiretap calls the agent you already run — Retell, Vapi, ElevenLabs, LiveKit, Synthflow, or a phone number — and acts like a hard caller. Angry. Fast. Confusing. Trying to trick it. Then it scores the call (rules + LLM judge) and stores results under `~/.wiretap/` (override with `WIRETAP_HOME`).
+
+Paid tools charge hundreds a month for this. Hamming is about $500/mo. This is a git clone.
 
 ```text
    ┌─────────────┐         dial          ┌──────────────────┐
@@ -17,9 +21,69 @@ Wiretap dials the agent you already run — Retell, Vapi, ElevenLabs, LiveKit, S
 
 ---
 
+## What it is
+
+A **voice agent** is an AI that talks on a call. Booking, support, sales — same idea.
+
+**Wiretap is a test harness.** It pretends to be the caller. It talks to your *live* agent — the one customers would actually reach — not a local replica. Then it tells you if the agent held up.
+
+It runs on your computer. From the terminal, or a local UI. Nothing phones home.
+
+---
+
+## Why use it
+
+Calling your own agent a few times is not testing. Your agent has likely never faced:
+
+- An angry customer about a bad charge
+- Someone with a heavy accent speaking fast
+- A caller who interrupts every two seconds
+- Someone trying to jailbreak a refund
+- A long call that jumps topics
+
+Wiretap generates those kinds of tests, runs them against the live agent, and scores the result. You can do it once, or every time you ship.
+
+---
+
+## Why choose wiretap
+
+The category is full of paid platforms and open-source tools that don't quite test the real thing.
+
+| | Paid tools (Hamming, Cekura, Coval) | Other open source | Wiretap |
+| --- | --- | --- | --- |
+| Price | $100–$500+/mo, or per minute | Free | **$0** — you only pay your own API keys |
+| Tests your live agent | Yes | Often no — replica, or can't reach the deployed agent | **Yes — default** |
+| Open source | No | Yes | **Yes (MIT)** |
+| You can read the scoring logic | No | Rarely disclosed | **Yes — in this repo** |
+| Runs on your machine | No (SaaS) | Often yes | **Yes — local-first** |
+| Terminal + CI | Usually web or a sales call | Mixed | **Yes** |
+
+Hamming, Cekura, and Coval dial live agents too. They also bill you, hide the eval logic, and want a vendor relationship.
+
+VoiceTest tests a local reconstruction by default. ServiceNow/eva is strong research software, but it cannot reach a deployed agent.
+
+Wiretap's job is narrower: **test the agent you actually deployed, for free, with scoring you can read.**
+
+If you need production monitoring, auditor-facing reports, or a hosted dashboard, use a paid platform. If you need to test your live agent from your laptop, use wiretap.
+
+![Wiretap local UI showing a scored call, what went wrong, and a suggested prompt fix](docs/simulation-improvements.png)
+
+You don't just get a pass/fail. You get the score, the reason, and wording you can apply to the agent.
+
+---
+
+## What it's not
+
+- Not a voice-agent builder. It tests agents. It does not create them.
+- Not production monitoring. No live ops dashboard.
+- Not a hosted SaaS. Results stay in `~/.wiretap/` on your machine.
+- Not magic. Voice testing is not fully deterministic. The judge is pinned at temperature `0.0` so scores don't drift on a whim — and that config is in the repo.
+
+---
+
 ## Quick start
 
-**Requirements:** Python ≥3.11, [uv](https://docs.astral.sh/uv/), and API keys for an LLM plus speech (STT/TTS). A platform key (e.g. Retell / Vapi) is needed to dial a live agent.
+**You need:** Python ≥3.11, [uv](https://docs.astral.sh/uv/), and API keys for an LLM plus speech (STT/TTS — speech-to-text and text-to-speech). A platform key (e.g. Retell / Vapi) is needed to dial a live agent.
 
 ```bash
 git clone https://github.com/mohibsaas/wiretap.git
@@ -53,13 +117,15 @@ wiretap report
 
 ## Local UI
 
+A browser dashboard on your machine. Same `~/.wiretap/` data and onboarding as the CLI.
+
 ```bash
 cd ui && npm install && npm run build && cd ..
 wiretap ui run
 # → http://127.0.0.1:8787
 ```
 
-Same `~/.wiretap/` data and onboarding as the CLI. For UI development (hot reload):
+For UI development (hot reload):
 
 ```bash
 uv run wiretap ui run --no-open          # API on :8787
@@ -138,6 +204,8 @@ Secrets belong in `~/.wiretap/.env` or the environment. Suite YAML stores agent 
 
 Test categories used for generation: `emotional`, `linguistic`, `adversarial`, `operational`, `factual`, `compliance`, `task`, `other`.
 
+Your agent can *say* it booked an appointment. Wiretap can also check whether the tool call actually fired.
+
 ---
 
 ## Data layout
@@ -152,6 +220,8 @@ Test categories used for generation: `emotional`, `linguistic`, `adversarial`, `
 ```
 
 Architecture notes: [docs/HLD.md](docs/HLD.md).
+
+Default speech (STT/TTS) is PyAI. You can use other providers. You pay those APIs yourself — there is no wiretap bill.
 
 ---
 
