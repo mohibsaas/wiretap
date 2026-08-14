@@ -5,6 +5,8 @@
 
 Open-source voice agent testing. Free. Dials your live agent. Not a copy.
 
+[![Wiretap demo](docs/demo.jpg)](https://youtu.be/-lqZwtQXGls)
+
 You built an AI that talks to customers. You called it a few times. It seemed fine. That is not a real test.
 
 Wiretap calls the agent you already run — Retell, Vapi, ElevenLabs, LiveKit, Synthflow, or a phone number — and acts like a hard caller. Angry. Fast. Confusing. Trying to trick it. Then it scores the call (rules + LLM judge) and stores results under `~/.wiretap/` (override with `WIRETAP_HOME`).
