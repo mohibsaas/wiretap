@@ -9,6 +9,11 @@ import {
   Share2,
   X,
 } from "lucide-react";
+import {
+  ApplyPromptDialog,
+  promptFindingIdsForScenario,
+  usePromptApply,
+} from "@/components/ApplyPromptDialog";
 import { NewRunDialog } from "@/components/NewRunDialog";
 import {
   ReportBadgePlate,
@@ -33,7 +38,6 @@ import {
   badgePackSvg,
   buildReport,
   categoryLabel,
-  downloadJson,
   downloadText,
   indexSuiteScenarios,
   resolveAgentName,
@@ -61,11 +65,16 @@ export function ReportDetailPage() {
   const [rerunOpen, setRerunOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [appliedFixes, setAppliedFixes] = useState<Set<string>>(() => new Set());
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [pendingFixId, setPendingFixId] = useState<string | null>(null);
+  const apply = usePromptApply(batchId);
 
   useEffect(() => {
     let alive = true;
     setError(null);
     setAppliedFixes(new Set());
+    setApplyOpen(false);
+    setPendingFixId(null);
     void client
       .evaluation(batchId)
       .then((detail) => {
@@ -126,9 +135,14 @@ export function ReportDetailPage() {
     }
   }
 
-  function exportRun() {
-    if (!run) return;
-    downloadJson(`wiretap-report-${reportHashSafe(run.batch_id)}.json`, run);
+  async function exportRun() {
+    if (!report) return;
+    try {
+      const { downloadReportPdf } = await import("@/lib/reportPdf");
+      downloadReportPdf(report);
+    } catch {
+      setError("Could not export the report PDF.");
+    }
   }
 
   function downloadBadges() {
@@ -190,7 +204,7 @@ export function ReportDetailPage() {
             variant="outline"
             size="sm"
             className="rounded-full"
-            onClick={exportRun}
+            onClick={() => void exportRun()}
           >
             <Download data-icon="inline-start" />
             Export
@@ -460,7 +474,11 @@ export function ReportDetailPage() {
             const to = `/evaluations/${encodeURIComponent(report.batchId)}/scenarios/${encodeURIComponent(sim.simulation_id)}`;
             const pass = !row.flagged;
             const applied = appliedFixes.has(sim.simulation_id);
-            const canApply = !pass && !applied;
+            const findingIds = promptFindingIdsForScenario(
+              run?.advice?.findings,
+              sim.scenario_id,
+            );
+            const canApply = !pass && !applied && findingIds.length > 0;
             return (
               <div
                 key={sim.simulation_id}
@@ -522,19 +540,12 @@ export function ReportDetailPage() {
                       type="button"
                       size="sm"
                       className="h-auto rounded-full px-3.5 py-1.5 text-xs font-semibold"
+                      disabled={apply.busy}
                       onClick={(e) => {
                         e.stopPropagation();
-                        const text = row.fix.trim();
-                        if (text) {
-                          void navigator.clipboard.writeText(text).catch(() => {
-                            /* clipboard may be unavailable; still mark applied */
-                          });
-                        }
-                        setAppliedFixes((prev) => {
-                          const next = new Set(prev);
-                          next.add(sim.simulation_id);
-                          return next;
-                        });
+                        setPendingFixId(sim.simulation_id);
+                        setApplyOpen(true);
+                        void apply.openPreview(findingIds);
                       }}
                     >
                       Apply fix
@@ -551,6 +562,32 @@ export function ReportDetailPage() {
           })}
         </div>
       </div>
+
+      <ApplyPromptDialog
+        open={applyOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            apply.close();
+            setApplyOpen(false);
+            setPendingFixId(null);
+          }
+        }}
+        preview={apply.preview}
+        busy={apply.busy}
+        error={apply.error}
+        onConfirm={() => {
+          void (async () => {
+            if (!(await apply.confirmApply()) || !pendingFixId) return;
+            setAppliedFixes((prev) => {
+              const next = new Set(prev);
+              next.add(pendingFixId);
+              return next;
+            });
+            setApplyOpen(false);
+            setPendingFixId(null);
+          })();
+        }}
+      />
 
       <BadgeModal
         open={!!badgeId}
@@ -594,10 +631,6 @@ function BackLink() {
       Reports
     </Link>
   );
-}
-
-function reportHashSafe(batchId: string): string {
-  return batchId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) || "report";
 }
 
 function BadgeModal({

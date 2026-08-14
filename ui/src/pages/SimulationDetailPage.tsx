@@ -10,19 +10,16 @@ import {
   RefreshCw,
   Sparkles,
 } from "lucide-react";
+import {
+  ApplyPromptDialog,
+  isPromptFinding,
+  usePromptApply,
+} from "@/components/ApplyPromptDialog";
 import { CallAudioPlayer, formatClock, buildSpeechSegments, activeSegmentIndex, hasRealTimings, type TimedTurn } from "@/components/CallAudioPlayer";
 import { TruncatedText } from "@/components/TruncatedText";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,8 +29,6 @@ import {
 import {
   client,
   type AdviceFinding,
-  type PromptDiffHunk,
-  type PromptPreview,
   type RunAdvice,
   type Simulation,
   type ToolCall,
@@ -165,62 +160,8 @@ const fieldLabelClass =
 
 const WRITABLE_PLATFORMS = new Set(["retell", "vapi", "elevenlabs"]);
 
-function skipReasonLabel(reason?: string) {
-  if (reason === "already_in_selection") return "Same wording as another selected finding";
-  return "Already present in the live prompt";
-}
-
-function PromptDiff({ hunks }: { hunks: PromptDiffHunk[] }) {
-  const lines = useMemo(() => {
-    const out: { op: string; text: string }[] = [];
-    for (const hunk of hunks) {
-      const parts = hunk.text.split("\n");
-      parts.forEach((line, i) => {
-        if (i === parts.length - 1 && line === "") return;
-        out.push({ op: hunk.op, text: line });
-      });
-    }
-    return out;
-  }, [hunks]);
-
-  if (lines.length === 0) {
-    return (
-      <p className="mt-1 text-[12.5px] text-muted-foreground">No line changes.</p>
-    );
-  }
-
-  return (
-    <pre className="mt-1 max-h-72 overflow-auto rounded-[10px] border border-border font-mono text-[11.5px] leading-[1.55]">
-      {lines.map((line, i) => {
-        const insert = line.op === "insert";
-        const remove = line.op === "delete";
-        return (
-          <div
-            key={`${i}-${line.op}`}
-            className={cn(
-              "flex gap-2 px-3 py-0.5 whitespace-pre-wrap break-words",
-              insert && "bg-[color-mix(in_srgb,var(--pass)_16%,white)] text-[var(--wt-green-800)]",
-              remove && "bg-[var(--wt-danger-surface)] text-[var(--wt-danger)]",
-              !insert && !remove && "bg-[var(--wt-section)] text-muted-foreground",
-            )}
-          >
-            <span className="w-3 shrink-0 select-none">
-              {insert ? "+" : remove ? "−" : " "}
-            </span>
-            <span>{line.text || " "}</span>
-          </div>
-        );
-      })}
-    </pre>
-  );
-}
-
 function findingKey(finding: AdviceFinding, index: number) {
   return finding.id || `${finding.title}-${index}`;
-}
-
-function isPromptFinding(finding: AdviceFinding) {
-  return finding.target === "agent_prompt" && Boolean(finding.suggested_text?.trim());
 }
 
 function FindingCard({
@@ -387,10 +328,8 @@ function ImprovementsPanel({
   );
   const idsKey = promptIds.join("\0");
   const [selected, setSelected] = useState<Set<string>>(() => new Set(promptIds));
-  const [preview, setPreview] = useState<PromptPreview | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [applyError, setApplyError] = useState<string | null>(null);
   const [applied, setApplied] = useState(false);
+  const apply = usePromptApply(batchId);
 
   // Only re-select when the finding *ids* change. Advice polling rebuilds
   // `findings` every few seconds; wiping preview there closed the modal.
@@ -412,33 +351,14 @@ function ImprovementsPanel({
   };
 
   const openPreview = async () => {
-    setApplyError(null);
-    setBusy(true);
-    try {
-      const ids = findings
-        .filter((f) => isPromptFinding(f) && selected.has(f.id))
-        .map((f) => f.id);
-      setPreview(await client.previewPrompt(batchId, ids));
-    } catch (err) {
-      setApplyError(err instanceof Error ? err.message : "Could not load the live prompt.");
-    } finally {
-      setBusy(false);
-    }
+    const ids = findings
+      .filter((f) => isPromptFinding(f) && selected.has(f.id))
+      .map((f) => f.id);
+    await apply.openPreview(ids);
   };
 
   const confirmApply = async () => {
-    if (!preview) return;
-    setBusy(true);
-    setApplyError(null);
-    try {
-      await client.applyPrompt(batchId, preview.applied_finding_ids, preview.current_hash);
-      setApplied(true);
-      setPreview(null);
-    } catch (err) {
-      setApplyError(err instanceof Error ? err.message : "Could not update the live prompt.");
-    } finally {
-      setBusy(false);
-    }
+    if (await apply.confirmApply()) setApplied(true);
   };
 
   return (
@@ -490,84 +410,33 @@ function ImprovementsPanel({
                 <Button
                   size="sm"
                   className="rounded-full"
-                  disabled={!canApply || busy}
+                  disabled={!canApply || apply.busy}
                   onClick={() => void openPreview()}
                 >
                   <Sparkles data-icon="inline-start" />
-                  {busy && !preview
+                  {apply.busy && !apply.preview
                     ? "Loading prompt…"
                     : `Apply ${selectedIds.length} to prompt`}
                 </Button>
               </div>
-              {applyError && (
-                <p className="mt-2 text-[12.5px] text-fail break-words">{applyError}</p>
+              {apply.error && !apply.preview && (
+                <p className="mt-2 text-[12.5px] text-fail break-words">{apply.error}</p>
               )}
             </>
           )}
         </div>
       )}
 
-      <Dialog
-        open={Boolean(preview)}
+      <ApplyPromptDialog
+        open={Boolean(apply.preview)}
         onOpenChange={(open) => {
-          if (!open && !busy) setPreview(null);
+          if (!open) apply.close();
         }}
-      >
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Apply to live prompt</DialogTitle>
-            <DialogDescription>
-              This overwrites the system prompt on {preview?.platform} agent{" "}
-              {preview?.agent_id}. Green is new, red is removed, gray is unchanged.
-            </DialogDescription>
-          </DialogHeader>
-          {preview && (
-            <div className="space-y-3">
-              {(preview.skipped?.length ?? 0) > 0 && (
-                <div>
-                  <div className={fieldLabelClass}>Already in the live prompt</div>
-                  <ul className="mt-1 space-y-2 rounded-[10px] border border-border bg-[var(--wt-warning-surface)] px-3 py-2">
-                    {preview.skipped?.map((item, i) => (
-                      <li key={item.id || i} className="text-[12px] leading-relaxed">
-                        <p className="font-mono text-[11.5px] break-words">{item.text}</p>
-                        <p className="mt-0.5 text-[11px] text-muted-foreground">
-                          {skipReasonLabel(item.reason)} — will not be written again.
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              <div>
-                <div className={fieldLabelClass}>
-                  {preview.unchanged ? "No prompt changes" : "Prompt diff"}
-                </div>
-                {preview.unchanged ? (
-                  <p className="mt-1 text-[12.5px] text-muted-foreground">
-                    Selected wording is already in the live prompt (or duplicated in this selection).
-                  </p>
-                ) : (
-                  <PromptDiff hunks={preview.diff ?? []} />
-                )}
-              </div>
-              {applyError && (
-                <p className="text-[12.5px] text-fail break-words">{applyError}</p>
-              )}
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPreview(null)} disabled={busy}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void confirmApply()}
-              disabled={busy || !preview || preview.unchanged || preview.applied_finding_ids.length === 0}
-            >
-              {busy ? "Writing…" : "Write to live agent"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        preview={apply.preview}
+        busy={apply.busy}
+        error={apply.error}
+        onConfirm={() => void confirmApply()}
+      />
     </div>
   );
 }
