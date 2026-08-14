@@ -108,6 +108,52 @@ def test_update_suite_rejects_invalid_name(client: TestClient) -> None:
     assert res.status_code == 400
 
 
+def test_update_suite_title(client: TestClient, tmp_path: Path) -> None:
+    res = client.put("/api/suites/default", json={"title": "Booking bot checks"})
+    assert res.status_code == 200, res.text
+    assert res.json()["title"] == "Booking bot checks"
+    on_disk = load_suite(tmp_path / ".wiretap" / "suites" / "default.yaml")
+    assert on_disk.title == "Booking bot checks"
+
+
+def test_delete_suite(client: TestClient, tmp_path: Path) -> None:
+    path = tmp_path / ".wiretap" / "suites" / "default.yaml"
+    assert path.is_file()
+    res = client.delete("/api/suites/default")
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "default"
+    assert not path.exists()
+    missing = client.get("/api/suites/default")
+    assert missing.status_code == 404
+
+
+def test_create_blank_suite_and_add_case(client: TestClient, tmp_path: Path) -> None:
+    res = client.post(
+        "/api/suites",
+        json={"name": "manual_suite", "title": "Manual suite"},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["name"] == "manual_suite"
+    assert body["title"] == "Manual suite"
+    assert body["scenarios"] == []
+
+    added = client.post(
+        "/api/suites/manual_suite/cases",
+        json={
+            "name": "Polite cancel",
+            "identity": "A calm caller",
+            "goal": "Cancel the plan",
+            "category": "task",
+        },
+    )
+    assert added.status_code == 200, added.text
+    cases = added.json()["scenarios"]
+    assert len(cases) == 1
+    assert cases[0]["name"] == "Polite cancel"
+    assert cases[0]["category"] == "task"
+
+
 def test_simulations_list_and_get(client: TestClient, tmp_path: Path) -> None:
     art = SimulationArtifact(
         suite_id="default",

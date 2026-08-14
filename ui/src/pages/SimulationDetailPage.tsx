@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Check,
   ChevronDown,
+  ChevronsLeftRight,
   Copy,
   FileText,
   FlaskConical,
@@ -13,15 +14,6 @@ import { CallAudioPlayer, formatClock, buildSpeechSegments, activeSegmentIndex, 
 import { TruncatedText } from "@/components/TruncatedText";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,8 +23,6 @@ import {
 import {
   client,
   type AdviceFinding,
-  type PromptDiffHunk,
-  type PromptPreview,
   type RunAdvice,
   type Simulation,
   type ToolCall,
@@ -49,6 +39,104 @@ const TARGET_LABELS: Record<string, string> = {
   test_suite: "Test suite",
 };
 
+function formatToolArgs(args: Record<string, unknown> | undefined): string {
+  const entries = Object.entries(args ?? {});
+  if (!entries.length) return "{}";
+  const parts = entries.map(([k, v]) => {
+    let rendered: string;
+    try {
+      rendered = JSON.stringify(v);
+    } catch {
+      rendered = String(v);
+    }
+    return `${k}: ${rendered}`;
+  });
+  return `{ ${parts.join(", ")} }`;
+}
+
+function formatToolOut(summary: string | undefined): string {
+  const s = (summary || "").trim();
+  return s || "—";
+}
+
+/** Matches Wiretap.dc.html tool-call card in the transcript stream. */
+function ToolRow({
+  call,
+  active,
+  onSeek,
+}: {
+  call: ToolCall;
+  active?: boolean;
+  onSeek?: () => void;
+}) {
+  const ok = call.status === "ok";
+  const errored = call.status === "error";
+  const statusLabel = ok ? "ok" : errored ? "error" : call.status || "unknown";
+  const clock =
+    call.at_seconds != null && Number.isFinite(call.at_seconds)
+      ? formatClock(call.at_seconds)
+      : null;
+
+  return (
+    <div className="flex items-start gap-3">
+      <button
+        type="button"
+        disabled={!onSeek && clock == null}
+        className={cn(
+          "mt-2.5 w-[38px] shrink-0 bg-transparent text-right font-mono text-[11.5px] transition-colors",
+          active
+            ? "text-[var(--wt-green-700)]"
+            : "text-[var(--wt-text-muted)] hover:text-foreground",
+          !onSeek && "cursor-default hover:text-[var(--wt-text-muted)]",
+        )}
+        onClick={onSeek}
+      >
+        {clock ?? "—"}
+      </button>
+      <div
+        className={cn(
+          "min-w-0 flex-1 rounded-xl border px-4 py-3",
+          "border-border bg-[var(--wt-section)]",
+          active && "border-[var(--wt-green-600)]",
+        )}
+      >
+        <div className="flex items-center gap-2.5">
+          <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-border bg-card text-muted-foreground">
+            <ChevronsLeftRight className="size-3" strokeWidth={1.9} />
+          </span>
+          <span className="min-w-0 truncate font-mono text-[12.5px] font-medium text-foreground">
+            {call.name}
+          </span>
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center rounded-full border bg-card px-2 py-0.5 font-mono text-[10.5px] font-semibold tracking-[0.04em] uppercase",
+              errored
+                ? "border-[var(--wt-danger)] text-[var(--wt-danger)]"
+                : "border-border text-muted-foreground",
+            )}
+          >
+            {statusLabel}
+          </span>
+        </div>
+        <div className="mt-2.5 ml-[34px] flex flex-col gap-1 font-mono text-[11.5px] leading-snug break-words text-muted-foreground">
+          <div>
+            <span className="text-[var(--wt-text-muted)]">args </span>
+            <span className="text-foreground/80">
+              {formatToolArgs(call.arguments)}
+            </span>
+          </div>
+          <div>
+            <span className="text-[var(--wt-text-muted)]">out&nbsp;&nbsp;</span>
+            <span className="text-foreground/80">
+              {formatToolOut(call.result_summary)}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const SEVERITY_VARIANT: Record<string, "fail" | "warn" | "muted"> = {
   high: "fail",
   medium: "warn",
@@ -64,78 +152,12 @@ const segmentTabClass = cn(
 const fieldLabelClass =
   "text-[10.5px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase";
 
-const WRITABLE_PLATFORMS = new Set(["retell", "vapi", "elevenlabs"]);
-
-function skipReasonLabel(reason?: string) {
-  if (reason === "already_in_selection") return "Same wording as another selected finding";
-  return "Already present in the live prompt";
-}
-
-function PromptDiff({ hunks }: { hunks: PromptDiffHunk[] }) {
-  const lines = useMemo(() => {
-    const out: { op: string; text: string }[] = [];
-    for (const hunk of hunks) {
-      const parts = hunk.text.split("\n");
-      parts.forEach((line, i) => {
-        if (i === parts.length - 1 && line === "") return;
-        out.push({ op: hunk.op, text: line });
-      });
-    }
-    return out;
-  }, [hunks]);
-
-  if (lines.length === 0) {
-    return (
-      <p className="mt-1 text-[12.5px] text-muted-foreground">No line changes.</p>
-    );
-  }
-
-  return (
-    <pre className="mt-1 max-h-72 overflow-auto rounded-[10px] border border-border font-mono text-[11.5px] leading-[1.55]">
-      {lines.map((line, i) => {
-        const insert = line.op === "insert";
-        const remove = line.op === "delete";
-        return (
-          <div
-            key={`${i}-${line.op}`}
-            className={cn(
-              "flex gap-2 px-3 py-0.5 whitespace-pre-wrap break-words",
-              insert && "bg-[color-mix(in_srgb,var(--pass)_16%,white)] text-[var(--wt-green-800)]",
-              remove && "bg-[var(--wt-danger-surface)] text-[var(--wt-danger)]",
-              !insert && !remove && "bg-[var(--wt-section)] text-muted-foreground",
-            )}
-          >
-            <span className="w-3 shrink-0 select-none">
-              {insert ? "+" : remove ? "−" : " "}
-            </span>
-            <span>{line.text || " "}</span>
-          </div>
-        );
-      })}
-    </pre>
-  );
-}
-
-function findingKey(finding: AdviceFinding, index: number) {
-  return finding.id || `${finding.title}-${index}`;
-}
-
-function isPromptFinding(finding: AdviceFinding) {
-  return finding.target === "agent_prompt" && Boolean(finding.suggested_text?.trim());
-}
-
 function FindingCard({
   finding,
   index,
-  selectable,
-  selected,
-  onToggle,
 }: {
   finding: AdviceFinding;
   index: number;
-  selectable: boolean;
-  selected: boolean;
-  onToggle: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [showEvidence, setShowEvidence] = useState(false);
@@ -151,120 +173,122 @@ function FindingCard({
 
   return (
     <article className="rounded-[14px] border border-border bg-card px-5 py-4.5">
-      <div className="flex items-start gap-3">
-        {selectable && (
-          <Checkbox
-            checked={selected}
-            onCheckedChange={() => onToggle()}
-            className="mt-1"
-            aria-label={`Include ${finding.title} in the prompt update`}
-          />
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                <Badge
-                  variant={SEVERITY_VARIANT[severity] ?? "warn"}
-                  className="h-auto rounded-full px-2 py-0.5 text-[10.5px] font-semibold capitalize"
-                >
-                  {severity}
-                </Badge>
-                <Badge
-                  variant="outline"
-                  className="h-auto rounded-full px-2 py-0.5 text-[10.5px]"
-                >
-                  {TARGET_LABELS[finding.target] ?? "Agent"}
-                </Badge>
-                {affected.length > 1 && (
-                  <span className="text-[11.5px] text-muted-foreground">
-                    Affects {affected.length} calls in this run
-                  </span>
-                )}
-              </div>
-              <h3 className="text-[14.5px] leading-snug font-semibold text-pretty break-words">
-                {finding.title}
-              </h3>
-            </div>
-            <span className="shrink-0 pt-0.5 font-mono text-[11px] text-[var(--wt-text-muted)]">
-              {String(index + 1).padStart(2, "0")}
-            </span>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <Badge
+              variant={SEVERITY_VARIANT[severity] ?? "warn"}
+              className="h-auto rounded-full px-2 py-0.5 text-[10.5px] font-semibold capitalize"
+            >
+              {severity}
+            </Badge>
+            <Badge
+              variant="outline"
+              className="h-auto rounded-full px-2 py-0.5 text-[10.5px]"
+            >
+              {TARGET_LABELS[finding.target] ?? "Agent"}
+            </Badge>
+            {affected.length > 1 && (
+              <span className="text-[11.5px] text-muted-foreground">
+                Affects {affected.length} calls in this run
+              </span>
+            )}
           </div>
+          <h3 className="text-[14.5px] leading-snug font-semibold text-pretty break-words">
+            {finding.title}
+          </h3>
+        </div>
+        <span className="shrink-0 pt-0.5 font-mono text-[11px] text-[var(--wt-text-muted)]">
+          {String(index + 1).padStart(2, "0")}
+        </span>
+      </div>
 
-          {finding.problem && (
-            <div className="mt-3.5">
-              <div className={fieldLabelClass}>What happened</div>
-              <p className="mt-1 text-[13px] leading-relaxed text-pretty break-words">
-                {finding.problem}
-              </p>
-            </div>
-          )}
+      {finding.problem && (
+        <div className="mt-3.5">
+          <div className={fieldLabelClass}>What happened</div>
+          <p className="mt-1 text-[13px] leading-relaxed text-pretty break-words">
+            {finding.problem}
+          </p>
+        </div>
+      )}
 
-          {finding.recommendation && (
-            <div className="mt-3.5">
-              <div className={fieldLabelClass}>What to change</div>
-              <p className="mt-1 text-[13px] leading-relaxed text-pretty break-words">
-                {finding.recommendation}
-              </p>
-            </div>
-          )}
+      {finding.recommendation && (
+        <div className="mt-3.5">
+          <div className={fieldLabelClass}>What to change</div>
+          <p className="mt-1 text-[13px] leading-relaxed text-pretty break-words">
+            {finding.recommendation}
+          </p>
+        </div>
+      )}
 
-          {finding.suggested_text && (
-            <div className="mt-4 rounded-[12px] border border-border bg-[var(--wt-section)] p-3">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <div className={fieldLabelClass}>Suggested prompt wording</div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 rounded-full px-2.5 text-[12px]"
-                  onClick={() => void copy()}
-                >
-                  {copied ? (
-                    <Check data-icon="inline-start" />
-                  ) : (
-                    <Copy data-icon="inline-start" />
-                  )}
-                  {copied ? "Copied" : "Copy"}
-                </Button>
-              </div>
-              <p className="rounded-[9px] border border-border bg-card px-3 py-2.5 font-mono text-[12px] leading-relaxed text-pretty break-words">
-                {finding.suggested_text}
-              </p>
-            </div>
-          )}
-
-          {evidence.length > 0 && (
-            <div className="mt-3.5">
-              <button
-                type="button"
-                onClick={() => setShowEvidence(!showEvidence)}
-                className="text-[12px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+      {finding.suggested_text && (
+        <div className="mt-4 rounded-[12px] border border-border bg-[var(--wt-section)] p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className={fieldLabelClass}>Suggested prompt wording</div>
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 rounded-full px-2.5 text-[12px]"
+                onClick={() => void copy()}
               >
-                {showEvidence ? "Hide evidence" : `Evidence (${evidence.length})`}
-              </button>
-              {showEvidence && (
-                <ul className="mt-2 space-y-2">
-                  {evidence.map((item, i) => (
-                    <li
-                      key={`${item.scenario_id}-${i}`}
-                      className="border-l-2 border-border pl-3"
-                    >
-                      <p className="text-[12.5px] leading-relaxed text-pretty break-words">
-                        “{item.quote}”
-                      </p>
-                      {item.scenario_id && (
-                        <p className="mt-0.5 font-mono text-[11px] text-[var(--wt-text-muted)]">
-                          {item.scenario_id}
-                        </p>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
+                {copied ? (
+                  <Check data-icon="inline-start" />
+                ) : (
+                  <Copy data-icon="inline-start" />
+                )}
+                {copied ? "Copied" : "Copy"}
+              </Button>
+              <Button
+                size="sm"
+                disabled
+                className="h-7 rounded-full px-2.5 text-[12px]"
+              >
+                <Sparkles data-icon="inline-start" />
+                Apply to prompt
+              </Button>
             </div>
+          </div>
+          <p className="rounded-[9px] border border-border bg-card px-3 py-2.5 font-mono text-[12px] leading-relaxed text-pretty break-words">
+            {finding.suggested_text}
+          </p>
+          <p className="mt-2 text-[11.5px] text-muted-foreground">
+            Copy it into your agent for now — writing changes back to the live
+            agent is not wired up yet.
+          </p>
+        </div>
+      )}
+
+      {evidence.length > 0 && (
+        <div className="mt-3.5">
+          <button
+            type="button"
+            onClick={() => setShowEvidence(!showEvidence)}
+            className="text-[12px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            {showEvidence ? "Hide evidence" : `Evidence (${evidence.length})`}
+          </button>
+          {showEvidence && (
+            <ul className="mt-2 space-y-2">
+              {evidence.map((item, i) => (
+                <li
+                  key={`${item.scenario_id}-${i}`}
+                  className="border-l-2 border-border pl-3"
+                >
+                  <p className="text-[12.5px] leading-relaxed text-pretty break-words">
+                    “{item.quote}”
+                  </p>
+                  {item.scenario_id && (
+                    <p className="mt-0.5 font-mono text-[11px] text-[var(--wt-text-muted)]">
+                      {item.scenario_id}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
-      </div>
+      )}
     </article>
   );
 }
@@ -273,75 +297,11 @@ function ImprovementsPanel({
   advice,
   findings,
   scoped,
-  batchId,
-  platform,
 }: {
   advice: RunAdvice | null;
   findings: AdviceFinding[];
   scoped: boolean;
-  batchId: string;
-  platform?: string | null;
 }) {
-  const promptIds = useMemo(
-    () => findings.filter(isPromptFinding).map((f) => f.id).filter(Boolean),
-    [findings],
-  );
-  const idsKey = promptIds.join("\0");
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(promptIds));
-  const [preview, setPreview] = useState<PromptPreview | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [applyError, setApplyError] = useState<string | null>(null);
-  const [applied, setApplied] = useState(false);
-
-  // Only re-select when the finding *ids* change. Advice polling rebuilds
-  // `findings` every few seconds; wiping preview there closed the modal.
-  useEffect(() => {
-    setSelected(new Set(idsKey ? idsKey.split("\0") : []));
-  }, [idsKey]);
-
-  const selectedIds = promptIds.filter((id) => selected.has(id));
-  const writable = WRITABLE_PLATFORMS.has(String(platform || "").toLowerCase());
-  const canApply = Boolean(batchId) && selectedIds.length > 0 && writable && !applied;
-
-  const toggle = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const openPreview = async () => {
-    setApplyError(null);
-    setBusy(true);
-    try {
-      const ids = findings
-        .filter((f) => isPromptFinding(f) && selected.has(f.id))
-        .map((f) => f.id);
-      setPreview(await client.previewPrompt(batchId, ids));
-    } catch (err) {
-      setApplyError(err instanceof Error ? err.message : "Could not load the live prompt.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const confirmApply = async () => {
-    if (!preview) return;
-    setBusy(true);
-    setApplyError(null);
-    try {
-      await client.applyPrompt(batchId, preview.applied_finding_ids, preview.current_hash);
-      setApplied(true);
-      setPreview(null);
-    } catch (err) {
-      setApplyError(err instanceof Error ? err.message : "Could not update the live prompt.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain pr-2 pb-8">
       <div className="rounded-[14px] border border-border bg-[var(--wt-section)] px-5 py-4">
@@ -361,161 +321,13 @@ function ImprovementsPanel({
             : "Based on this run's failures and the agent's imported configuration."}
         </p>
       </div>
-      {findings.map((finding, i) => {
-        const key = finding.id || findingKey(finding, i);
-        return (
-          <FindingCard
-            key={key}
-            finding={finding}
-            index={i}
-            selectable={isPromptFinding(finding) && Boolean(finding.id)}
-            selected={selected.has(finding.id)}
-            onToggle={() => finding.id && toggle(finding.id)}
-          />
-        );
-      })}
-      {promptIds.length > 0 && (
-        <div className="sticky bottom-0 rounded-[14px] border border-border bg-card px-5 py-4">
-          {applied ? (
-            <p className="text-[13px] text-pass">
-              Live prompt updated with the selected wording.
-            </p>
-          ) : (
-            <>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[12.5px] text-muted-foreground">
-                  {writable
-                    ? `${selectedIds.length} selected — applied together as one prompt write.`
-                    : "This platform has no prompt write API. Copy wording into the agent instead."}
-                </p>
-                <Button
-                  size="sm"
-                  className="rounded-full"
-                  disabled={!canApply || busy}
-                  onClick={() => void openPreview()}
-                >
-                  <Sparkles data-icon="inline-start" />
-                  {busy && !preview
-                    ? "Loading prompt…"
-                    : `Apply ${selectedIds.length} to prompt`}
-                </Button>
-              </div>
-              {applyError && (
-                <p className="mt-2 text-[12.5px] text-fail break-words">{applyError}</p>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      <Dialog
-        open={Boolean(preview)}
-        onOpenChange={(open) => {
-          if (!open && !busy) setPreview(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Apply to live prompt</DialogTitle>
-            <DialogDescription>
-              This overwrites the system prompt on {preview?.platform} agent{" "}
-              {preview?.agent_id}. Green is new, red is removed, gray is unchanged.
-            </DialogDescription>
-          </DialogHeader>
-          {preview && (
-            <div className="space-y-3">
-              {(preview.skipped?.length ?? 0) > 0 && (
-                <div>
-                  <div className={fieldLabelClass}>Already in the live prompt</div>
-                  <ul className="mt-1 space-y-2 rounded-[10px] border border-border bg-[var(--wt-warning-surface)] px-3 py-2">
-                    {preview.skipped?.map((item, i) => (
-                      <li key={item.id || i} className="text-[12px] leading-relaxed">
-                        <p className="font-mono text-[11.5px] break-words">{item.text}</p>
-                        <p className="mt-0.5 text-[11px] text-muted-foreground">
-                          {skipReasonLabel(item.reason)} — will not be written again.
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              <div>
-                <div className={fieldLabelClass}>
-                  {preview.unchanged ? "No prompt changes" : "Prompt diff"}
-                </div>
-                {preview.unchanged ? (
-                  <p className="mt-1 text-[12.5px] text-muted-foreground">
-                    Selected wording is already in the live prompt (or duplicated in this selection).
-                  </p>
-                ) : (
-                  <PromptDiff hunks={preview.diff ?? []} />
-                )}
-              </div>
-              {applyError && (
-                <p className="text-[12.5px] text-fail break-words">{applyError}</p>
-              )}
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPreview(null)} disabled={busy}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void confirmApply()}
-              disabled={busy || !preview || preview.unchanged || preview.applied_finding_ids.length === 0}
-            >
-              {busy ? "Writing…" : "Write to live agent"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-function ToolRow({ call }: { call: ToolCall }) {
-  const [open, setOpen] = useState(false);
-  const args = Object.entries(call.arguments ?? {});
-  const variant =
-    call.status === "ok" ? "pass" : call.status === "error" ? "fail" : "warn";
-  return (
-    <div className="ml-[50px] border-l-2 border-border pl-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-          tool
-        </span>
-        <code className="font-mono text-xs">{call.name}</code>
-        <Badge variant={variant}>{call.status}</Badge>
-        {call.at_seconds !== null && call.at_seconds !== undefined && (
-          <span className="text-[11px] text-muted-foreground">
-            {call.at_seconds.toFixed(1)}s
-          </span>
-        )}
-        {args.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setOpen(!open)}
-            className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
-          >
-            {open ? "hide arguments" : "arguments"}
-          </button>
-        )}
-      </div>
-      {open && args.length > 0 && (
-        <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted-foreground">
-          {args.map(([k, v]) => (
-            <div key={k} className="contents">
-              <dt>{k}</dt>
-              <dd className="break-all">{String(v)}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-      {call.result_summary && (
-        <p className="mt-1 font-mono text-[11px] text-muted-foreground break-all">
-          {call.result_summary}
-        </p>
-      )}
+      {findings.map((finding, i) => (
+        <FindingCard
+          key={finding.id || `${finding.title}-${i}`}
+          finding={finding}
+          index={i}
+        />
+      ))}
     </div>
   );
 }
@@ -529,6 +341,7 @@ export function SimulationDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTurn, setActiveTurn] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showTools, setShowTools] = useState(true);
   const [audioDuration, setAudioDuration] = useState(0);
   const [seekRequest, setSeekRequest] = useState<{ sec: number; token: number } | null>(
     null,
@@ -579,25 +392,20 @@ export function SimulationDetailPage() {
     ? `/evaluations?run=${encodeURIComponent(backBatch)}`
     : "/evaluations";
 
-  // Advice is generated after each failed judgement, so it lives on the parent
-  // evaluation and can appear before the rest of the suite finishes.
+  // Advice is generated once per run, so it lives on the parent evaluation.
   useEffect(() => {
     if (!backBatch) return;
     let cancelled = false;
-    const load = () =>
-      client
-        .evaluation(backBatch)
-        .then((run) => {
-          if (!cancelled) setAdvice(run.advice ?? null);
-        })
-        .catch(() => {
-          if (!cancelled) setAdvice(null);
-        });
-    void load();
-    const tick = window.setInterval(() => void load(), 4000);
+    client
+      .evaluation(backBatch)
+      .then((run) => {
+        if (!cancelled) setAdvice(run.advice ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setAdvice(null);
+      });
     return () => {
       cancelled = true;
-      window.clearInterval(tick);
     };
   }, [backBatch]);
 
@@ -614,6 +422,7 @@ export function SimulationDetailPage() {
   }, [advice, sim]);
 
   const turnCount = sim?.transcript?.length || 0;
+  const toolCount = sim?.tool_calls?.length ?? 0;
   const agentLabel =
     (sim?.meta?.agent_name as string | undefined) ||
     (sim?.meta?.agent_id as string | undefined) ||
@@ -701,12 +510,16 @@ export function SimulationDetailPage() {
     }));
   }
 
+  function jumpToSeconds(sec: number) {
+    setSeekRequest((prev) => ({
+      sec,
+      token: (prev?.token ?? 0) + 1,
+    }));
+  }
+
   if (!sim && !error) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
-
-  const successCriteria =
-    (sim?.meta?.success_criteria as string | undefined)?.trim() || null;
 
   return (
     <div className="-mx-8 -my-6 flex h-[calc(100dvh-1rem)] min-h-[520px] flex-col overflow-hidden">
@@ -764,13 +577,13 @@ export function SimulationDetailPage() {
                 <span className="shrink-0">Agent tested</span>
                 <TruncatedText
                   text={agentLabel}
-                  className="max-w-[min(280px,40vw)] font-semibold text-foreground"
+                  className="max-w-[min(280px,40vw)] font-medium text-[var(--wt-text-secondary)]"
                 />
                 <span className="shrink-0 text-border">·</span>
                 <span className="shrink-0">persona</span>
                 <TruncatedText
                   text={callerLabel}
-                  className="max-w-[min(200px,30vw)] font-medium text-foreground"
+                  className="max-w-[min(200px,30vw)] font-medium text-[var(--wt-text-secondary)]"
                 />
                 {sim.simulation_id && (
                   <>
@@ -868,41 +681,59 @@ export function SimulationDetailPage() {
           <div className="flex min-h-0 w-full max-w-[1148px] gap-7">
             <div className="flex min-h-0 min-w-0 max-w-[820px] flex-1 flex-col">
               <div className="mb-3.5 flex shrink-0 flex-wrap items-center justify-between gap-3">
-                {findings.items.length > 0 ? (
-                  <Tabs
-                    value={view}
-                    onValueChange={(v) =>
-                      setView(v as "transcript" | "improvements")
-                    }
-                    className="gap-0"
-                  >
-                    <TabsList className="box-border flex h-9 items-center gap-0.5 rounded-xl bg-[var(--wt-section)] p-[3px] text-foreground">
-                      <TabsTrigger value="transcript" className={segmentTabClass}>
-                        Transcript
-                      </TabsTrigger>
-                      <TabsTrigger
-                        value="improvements"
-                        className={segmentTabClass}
-                      >
-                        Improvements
-                        <Badge
-                          variant={view === "improvements" ? "default" : "muted"}
-                          className="ml-1.5 h-[18px] min-w-[18px] rounded-full px-1.5 text-[10.5px]"
+                <div className="flex flex-wrap items-baseline gap-2.5">
+                  {findings.items.length > 0 ? (
+                    <Tabs
+                      value={view}
+                      onValueChange={(v) =>
+                        setView(v as "transcript" | "improvements")
+                      }
+                      className="gap-0"
+                    >
+                      <TabsList className="box-border flex h-9 items-center gap-0.5 rounded-xl bg-[var(--wt-section)] p-[3px] text-foreground">
+                        <TabsTrigger value="transcript" className={segmentTabClass}>
+                          Transcript
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="improvements"
+                          className={segmentTabClass}
                         >
-                          {findings.items.length}
-                        </Badge>
-                      </TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                ) : (
-                  <h2 className="shrink-0 text-[15px] font-semibold">
-                    Transcript
-                  </h2>
-                )}
-                {view === "transcript" && (
-                  <span className="font-mono text-xs text-[var(--wt-text-muted)]">
-                    {turnCount} turns
-                  </span>
+                          Improvements
+                          <Badge
+                            variant={view === "improvements" ? "default" : "muted"}
+                            className="ml-1.5 h-[18px] min-w-[18px] rounded-full px-1.5 text-[10.5px]"
+                          >
+                            {findings.items.length}
+                          </Badge>
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                  ) : (
+                    <h2 className="shrink-0 text-[15px] font-semibold">
+                      Transcript
+                    </h2>
+                  )}
+                  {view === "transcript" && (
+                    <span className="font-mono text-xs text-[var(--wt-text-muted)]">
+                      {turnCount} turns
+                      {toolCount > 0 ? ` · ${toolCount} tool calls` : ""}
+                    </span>
+                  )}
+                </div>
+                {view === "transcript" && toolCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowTools((v) => !v)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-medium transition-colors",
+                      showTools
+                        ? "border-[var(--wt-green-600)] bg-[var(--wt-green-100)] text-[var(--wt-green-700)]"
+                        : "border-border bg-card text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <ChevronsLeftRight className="size-3" strokeWidth={1.9} />
+                    Tool calls
+                  </button>
                 )}
               </div>
 
@@ -911,16 +742,12 @@ export function SimulationDetailPage() {
                   advice={advice}
                   findings={findings.items}
                   scoped={findings.scoped}
-                  batchId={backBatch}
-                  platform={
-                    (sim.meta?.platform as string | undefined) || null
-                  }
                 />
               )}
 
               <div
                 hidden={view !== "transcript"}
-                className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overscroll-contain pr-2 pb-8"
+                className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain pr-2 pb-8"
               >
                 {sim.transcript.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
@@ -936,10 +763,19 @@ export function SimulationDetailPage() {
                     const speaker = isCaller ? callerLabel : agentLabel;
                     const showClock = start != null && end != null;
                     return (
-                      <div key={`${t.role}-${i}`} className="space-y-2">
-                        {(tools.byTurn.get(i) ?? []).map((call, n) => (
-                          <ToolRow key={`${call.name}-${i}-${n}`} call={call} />
-                        ))}
+                      <div key={`${t.role}-${i}`} className="space-y-2.5">
+                        {showTools &&
+                          (tools.byTurn.get(i) ?? []).map((call, n) => (
+                            <ToolRow
+                              key={`${call.name}-${i}-${n}`}
+                              call={call}
+                              onSeek={
+                                call.at_seconds != null
+                                  ? () => jumpToSeconds(call.at_seconds!)
+                                  : undefined
+                              }
+                            />
+                          ))}
                         <div className="flex items-start gap-3">
                         <button
                           type="button"
@@ -992,16 +828,33 @@ export function SimulationDetailPage() {
                     );
                   })
                 )}
-                {(tools.byTurn.get(tools.total) ?? []).map((call, n) => (
-                  <ToolRow key={`tail-${call.name}-${n}`} call={call} />
-                ))}
-                {tools.unplaced.length > 0 && (
-                  <div className="space-y-2 pt-1">
-                    <p className="text-[12px] text-muted-foreground">
+                {showTools &&
+                  (tools.byTurn.get(tools.total) ?? []).map((call, n) => (
+                    <ToolRow
+                      key={`tail-${call.name}-${n}`}
+                      call={call}
+                      onSeek={
+                        call.at_seconds != null
+                          ? () => jumpToSeconds(call.at_seconds!)
+                          : undefined
+                      }
+                    />
+                  ))}
+                {showTools && tools.unplaced.length > 0 && (
+                  <div className="space-y-2.5 pt-1">
+                    <p className="pl-[50px] text-[12px] text-muted-foreground">
                       Tool calls with no known position in the transcript:
                     </p>
                     {tools.unplaced.map((call, n) => (
-                      <ToolRow key={`unplaced-${call.name}-${n}`} call={call} />
+                      <ToolRow
+                        key={`unplaced-${call.name}-${n}`}
+                        call={call}
+                        onSeek={
+                          call.at_seconds != null
+                            ? () => jumpToSeconds(call.at_seconds!)
+                            : undefined
+                        }
+                      />
                     ))}
                   </div>
                 )}
@@ -1017,17 +870,46 @@ export function SimulationDetailPage() {
             <aside className="flex min-h-0 w-full max-w-[320px] min-w-[230px] shrink-0 basis-[300px] flex-col gap-3.5 overflow-y-auto overscroll-contain pb-10">
               <div className="min-w-0 shrink-0 rounded-[14px] border border-border bg-card px-5 py-5">
                 <div className="mb-3 text-[11px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase">
-                  Test case
+                  Goal match
                 </div>
-                <TruncatedText
-                  text={title}
-                  className="text-sm font-semibold"
-                />
-                {successCriteria ? (
-                  <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground text-pretty break-words">
-                    {successCriteria}
-                  </p>
-                ) : null}
+                <div className="flex items-end justify-between gap-3">
+                  <div
+                    className={cn(
+                      "font-mono text-[28px] font-semibold leading-none tabular-nums",
+                      verdict?.variant === "pass" && "text-pass",
+                      verdict?.variant === "warn" && "text-warn",
+                      verdict?.variant === "fail" && "text-fail",
+                      !verdict && "text-muted-foreground",
+                    )}
+                  >
+                    {goalPctLabel}
+                  </div>
+                  <span className="pb-0.5 text-[12.5px] font-medium text-muted-foreground">
+                    {verdict?.label === "Inconclusive"
+                      ? "No score"
+                      : verdict?.label ?? "—"}
+                  </span>
+                </div>
+                <div className="mt-4 space-y-1.5 text-[11.5px] leading-snug text-muted-foreground">
+                  <div className="flex justify-between gap-2">
+                    <span>Fail</span>
+                    <span className="font-mono tabular-nums">
+                      &lt; {Math.round(failBelow * 100)}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span>Partial</span>
+                    <span className="font-mono tabular-nums">
+                      {Math.round(failBelow * 100)}–{Math.round(passAt * 100) - 1}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span>Pass</span>
+                    <span className="font-mono tabular-nums">
+                      ≥ {Math.round(passAt * 100)}%
+                    </span>
+                  </div>
+                </div>
               </div>
 
               <div
@@ -1081,51 +963,6 @@ export function SimulationDetailPage() {
                   </button>
                 )}
               </div>
-
-              <div className="min-w-0 shrink-0 rounded-[14px] border border-border bg-card px-5 py-5">
-                <div className="mb-3 text-[11px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase">
-                  Goal match
-                </div>
-                <div className="flex items-end justify-between gap-3">
-                  <div
-                    className={cn(
-                      "font-mono text-[28px] font-semibold leading-none tabular-nums",
-                      verdict?.variant === "pass" && "text-pass",
-                      verdict?.variant === "warn" && "text-warn",
-                      verdict?.variant === "fail" && "text-fail",
-                      !verdict && "text-muted-foreground",
-                    )}
-                  >
-                    {goalPctLabel}
-                  </div>
-                  <span className="pb-0.5 text-[12.5px] font-medium text-muted-foreground">
-                    {verdict?.label === "Inconclusive"
-                      ? "No score"
-                      : verdict?.label ?? "—"}
-                  </span>
-                </div>
-                <div className="mt-4 space-y-1.5 text-[11.5px] leading-snug text-muted-foreground">
-                  <div className="flex justify-between gap-2">
-                    <span>Fail</span>
-                    <span className="font-mono tabular-nums">
-                      &lt; {Math.round(failBelow * 100)}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span>Partial</span>
-                    <span className="font-mono tabular-nums">
-                      {Math.round(failBelow * 100)}–{Math.round(passAt * 100) - 1}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span>Pass</span>
-                    <span className="font-mono tabular-nums">
-                      ≥ {Math.round(passAt * 100)}%
-                    </span>
-                  </div>
-                </div>
-              </div>
-
             </aside>
           </div>
         </div>

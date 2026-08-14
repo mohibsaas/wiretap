@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { Info } from "lucide-react";
 import {
   client,
   type AgentNumberTarget,
@@ -7,18 +8,25 @@ import {
   type PstnStatus,
   type SuiteSummary,
 } from "@/lib/api";
+import {
+  AppModal,
+  modalFieldClass,
+  modalFieldsClass,
+  modalHintClass,
+  modalInputClass,
+  modalLabelClass,
+} from "@/components/AppModal";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { AppSelect } from "@/components/AppSelect";
+import { cn } from "@/lib/utils";
 
 type Props = {
   open: boolean;
@@ -33,7 +41,16 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [suite, setSuite] = useState("");
   const [agentFrom, setAgentFrom] = useState("");
-  const [concurrency, setConcurrency] = useState(4);
+  const [concurrency, setConcurrency] = useState(() => {
+    try {
+      const raw = localStorage.getItem("wiretap.defaultConcurrency");
+      const n = raw ? Number(raw) : 4;
+      if (Number.isFinite(n) && n >= 1 && n <= 32) return Math.floor(n);
+    } catch {
+      /* ignore */
+    }
+    return 4;
+  });
   const [strict, setStrict] = useState(false);
   const [transport, setTransport] = useState<"web" | "phone">("web");
   const [phone, setPhone] = useState("");
@@ -53,7 +70,16 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
     void client.agents().then(setAgents).catch(() => setAgents([]));
     void client.pstnStatus().then(setPstn).catch(() => setPstn(null));
     setAgentFrom("");
-    setConcurrency(4);
+    setConcurrency(() => {
+      try {
+        const raw = localStorage.getItem("wiretap.defaultConcurrency");
+        const n = raw ? Number(raw) : 4;
+        if (Number.isFinite(n) && n >= 1 && n <= 32) return Math.floor(n);
+      } catch {
+        /* ignore */
+      }
+      return 4;
+    });
     setStrict(false);
     setTransport("web");
     setPhone("");
@@ -115,143 +141,196 @@ export function NewRunDialog({ open, onOpenChange, initialSuite }: Props) {
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[460px] rounded-[18px] border-border p-6 shadow-[0_30px_80px_-20px_rgba(41,41,39,0.28)]">
-        <DialogHeader>
-          <DialogTitle className="text-base font-semibold tracking-[-0.01em]">
-            New run
-          </DialogTitle>
-          <DialogDescription className="text-[13px] leading-relaxed">
-            Tap the line on an agent and put a suite on the record.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="flex flex-col gap-3.5 py-1">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="run-suite">Suite</Label>
-            <select
-              id="run-suite"
-              className="h-10 w-full rounded-[10px] border border-input bg-card px-3 font-mono text-[13px]"
-              value={suite}
-              onChange={(e) => setSuite(e.target.value)}
-            >
-              {suites.length === 0 && <option value="">No suites yet</option>}
-              {suites.map((s) => (
-                <option key={s.name} value={s.name}>
-                  {s.name}
-                  {s.scenario_count != null ? ` · ${s.scenario_count} scenarios` : ""}
-                </option>
-              ))}
-            </select>
-            {selected?.platform && (
-              <p className="text-xs text-muted-foreground">
-                {selected.platform}
-                {selected.transport ? ` · ${selected.transport}` : ""}
-              </p>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="run-agent">Target agent</Label>
-            <select
-              id="run-agent"
-              className="h-10 w-full rounded-[10px] border border-input bg-card px-3 font-mono text-[13px]"
-              value={agentFrom}
-              onChange={(e) => setAgentFrom(e.target.value)}
-            >
-              <option value="">Suite default</option>
-              {otherAgents.map((a) => (
-                <option key={`${a.suite}-${a.agent_id}`} value={a.suite || ""}>
-                  {(a.name || a.agent_id || a.suite) +
-                    (a.platform ? ` · ${a.platform}` : "")}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="run-transport">Reach agent via</Label>
-            <select
-              id="run-transport"
-              className="h-10 w-full rounded-[10px] border border-input bg-card px-3 text-[13px]"
-              value={transport}
-              onChange={(e) => setTransport(e.target.value === "phone" ? "phone" : "web")}
-            >
-              <option value="web">
-                Web{selected?.transport ? ` · ${selected.transport}` : ""}
-              </option>
-              <option value="phone" disabled={!phoneReady}>
-                Phone · real call{phoneReady ? "" : " (not set up)"}
-              </option>
-            </select>
-            {!phoneReady && (
-              <p className="text-xs text-muted-foreground">
-                Phone runs need Twilio —{" "}
-                <Link to="/settings" className="underline">
-                  finish phone testing in Settings
-                </Link>
-                {pstn?.missing?.length ? ` (${pstn.missing.join(", ")})` : ""}.
-              </p>
-            )}
-          </div>
-
-          {byPhone && (
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="run-phone">Agent number to dial</Label>
-              <Input
-                id="run-phone"
-                className="h-10 rounded-[10px] font-mono text-[13px]"
-                placeholder="+15551234567"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                {target?.number && target.source !== "request"
-                  ? `From the ${target.source === "suite" ? "suite" : "last run"}.`
-                  : "No number saved for this agent yet — enter the one that reaches it."}
-                {pstn?.from_number ? ` Calling from ${pstn.from_number}.` : ""}
-              </p>
-            </div>
+    <AppModal
+      open={open}
+      onOpenChange={onOpenChange}
+      title="New run"
+      description="Tap the line on an agent and put a suite on the record."
+      maxWidthClass="sm:max-w-[480px]"
+      footer={
+        <>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={busy}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={start}
+            disabled={busy || !suite || (byPhone && !phone.trim())}
+          >
+            {busy ? "Starting…" : "Start run"}
+          </Button>
+        </>
+      }
+    >
+      <div className={modalFieldsClass}>
+        <div className={modalFieldClass}>
+          <Label htmlFor="run-suite" className={modalLabelClass}>
+            Suite
+          </Label>
+          <AppSelect
+            id="run-suite"
+            value={suite || "__none__"}
+            onValueChange={(v) => setSuite(v === "__none__" ? "" : v)}
+            placeholder="Select a suite"
+            options={
+              suites.length === 0
+                ? [
+                    {
+                      value: "__none__",
+                      label: "No suites yet",
+                      disabled: true,
+                    },
+                  ]
+                : suites.map((s) => ({
+                    value: s.name,
+                    label:
+                      ((s.title || "").trim() || s.name) +
+                      (s.scenario_count != null
+                        ? ` · ${s.scenario_count} scenarios`
+                        : ""),
+                  }))
+            }
+          />
+          {selected?.platform && (
+            <p className={modalHintClass}>
+              {selected.platform}
+              {selected.transport ? ` · ${selected.transport}` : ""}
+            </p>
           )}
+        </div>
 
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="run-concurrency">Concurrency</Label>
-              <Input
-                id="run-concurrency"
-                type="number"
-                min={1}
-                max={32}
-                className="h-10 w-20 rounded-[10px]"
-                value={byPhone ? 1 : concurrency}
-                disabled={byPhone}
-                onChange={(e) => setConcurrency(Number(e.target.value) || 1)}
-              />
-              {byPhone && (
-                <p className="text-xs text-muted-foreground">One call at a time.</p>
-              )}
-            </div>
-            <label className="mt-5 flex items-center gap-2 text-sm">
+        <div className={modalFieldClass}>
+          <Label htmlFor="run-agent" className={modalLabelClass}>
+            Target agent
+          </Label>
+          <AppSelect
+            id="run-agent"
+            value={agentFrom || "__default__"}
+            onValueChange={(v) => setAgentFrom(v === "__default__" ? "" : v)}
+            options={[
+              { value: "__default__", label: "Suite default" },
+              ...otherAgents
+                .filter((a) => Boolean(a.suite))
+                .map((a) => ({
+                  value: a.suite as string,
+                  label:
+                    (a.name || a.agent_id || a.suite || "agent") +
+                    (a.platform ? ` · ${a.platform}` : ""),
+                })),
+            ]}
+          />
+        </div>
+
+        <div className={modalFieldClass}>
+          <Label htmlFor="run-transport" className={modalLabelClass}>
+            Reach agent via
+          </Label>
+          <AppSelect
+            id="run-transport"
+            value={transport}
+            onValueChange={(v) =>
+              setTransport(v === "phone" ? "phone" : "web")
+            }
+            options={[
+              {
+                value: "web",
+                label: `Web${selected?.transport ? ` · ${selected.transport}` : ""}`,
+              },
+              {
+                value: "phone",
+                label: `Phone · real call${phoneReady ? "" : " (not set up)"}`,
+                disabled: !phoneReady,
+              },
+            ]}
+          />
+          {!phoneReady && (
+            <p className={modalHintClass}>
+              Phone runs need Twilio —{" "}
+              <Link to="/settings" className="underline">
+                finish phone testing in Settings
+              </Link>
+              {pstn?.missing?.length ? ` (${pstn.missing.join(", ")})` : ""}
+              .
+            </p>
+          )}
+        </div>
+
+        {byPhone && (
+          <div className={modalFieldClass}>
+            <Label htmlFor="run-phone" className={modalLabelClass}>
+              Agent number to dial
+            </Label>
+            <Input
+              id="run-phone"
+              className={cn(modalInputClass, "font-mono")}
+              placeholder="+15551234567"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+            <p className={modalHintClass}>
+              {target?.number && target.source !== "request"
+                ? `From the ${target.source === "suite" ? "suite" : "last run"}.`
+                : "No number saved for this agent yet — enter the one that reaches it."}
+              {pstn?.from_number ? ` Calling from ${pstn.from_number}.` : ""}
+            </p>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-4">
+          <div className={modalFieldClass}>
+            <Label htmlFor="run-concurrency" className={modalLabelClass}>
+              Concurrency
+            </Label>
+            <Input
+              id="run-concurrency"
+              type="number"
+              min={1}
+              max={32}
+              className={cn(modalInputClass, "w-20")}
+              value={byPhone ? 1 : concurrency}
+              disabled={byPhone}
+              onChange={(e) => setConcurrency(Number(e.target.value) || 1)}
+            />
+            {byPhone && (
+              <p className={modalHintClass}>One call at a time.</p>
+            )}
+          </div>
+          <div className="mt-5 flex items-center gap-2 text-sm">
+            <label className="flex cursor-pointer items-center gap-2">
               <Checkbox
                 checked={strict}
                 onCheckedChange={(v) => setStrict(v === true)}
               />
               Strict caller
             </label>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-[var(--wt-text-muted)] transition-colors hover:text-foreground"
+                  aria-label="About strict caller"
+                >
+                  <Info className="size-3.5" strokeWidth={1.8} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent
+                side="top"
+                sideOffset={6}
+                className="max-w-[260px] text-pretty"
+              >
+                Lowers tester temperature and runs contract checks so the
+                synthetic caller stays on-script. Off-contract behavior can mark
+                the run inconclusive instead of failing the agent.
+              </TooltipContent>
+            </Tooltip>
           </div>
-
-          {error && <p className="text-sm text-fail">{error}</p>}
         </div>
 
-        <DialogFooter className="gap-2 sm:justify-end">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
-            Cancel
-          </Button>
-          <Button onClick={start} disabled={busy || !suite || (byPhone && !phone.trim())}>
-            {busy ? "Starting…" : "Start run"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        {error && <p className="text-sm text-fail">{error}</p>}
+      </div>
+    </AppModal>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ComponentType } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   Bot,
   CheckCircle2,
@@ -9,6 +9,7 @@ import {
   LayoutGrid,
   Play,
   Settings,
+  Shapes,
   SquareCheckBig,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -37,6 +38,7 @@ const monitor: NavItem[] = [
 
 const evaluate: NavItem[] = [
   { to: "/suites", label: "Test Suites", icon: SquareCheckBig },
+  { to: "/categories", label: "Test Categories", icon: Shapes },
   { to: "/evaluations", label: "Simulations", icon: Play },
   { to: "/agents", label: "Agents", icon: Bot },
 ];
@@ -81,7 +83,6 @@ export function AppShell() {
   const isTranscriptPage = /\/evaluations\/[^/]+\/scenarios\/[^/]+/.test(
     location.pathname,
   );
-  const isReportDetail = /\/reports\/[^/]+/.test(location.pathname);
 
   useEffect(() => {
     void client.onboardStatus().then(setStatus).catch(() => setStatus(null));
@@ -91,18 +92,52 @@ export function AppShell() {
       .catch(() => setEvalCount(0));
   }, [location.pathname]);
 
+  /** Mirrors onboarding steps (Wiretap.dc.html setup checklist). */
   const checklist = useMemo(() => {
-    const connected = Boolean(
-      status?.has_platform_key || status?.agent_id || (status?.suite_count ?? 0) > 0,
+    const callerReady = Boolean(
+      status?.caller_configured || status?.has_llm_key || status?.caller,
     );
+    const agentReady = Boolean(
+      status?.agent_id ||
+        status?.has_platform_key ||
+        (status?.platform && status.platform !== "custom"),
+    );
+    const suiteReady = (status?.suite_count ?? 0) > 0;
     const simulated = evalCount > 0;
+
     const items = [
-      { id: "connect", label: "Connect an agent", done: connected },
-      { id: "simulate", label: "Run a simulation", done: simulated },
-      { id: "monitor", label: "Review a dashboard", done: false },
+      {
+        id: "caller",
+        label: "Setup Evaluation Agent",
+        done: callerReady,
+        to: "/settings",
+      },
+      {
+        id: "agent",
+        label: "Connect Target Agent",
+        done: agentReady,
+        to: "/agents",
+      },
+      {
+        id: "suite",
+        label: "Generate Test Suite",
+        done: suiteReady,
+        to: "/suites",
+      },
+      {
+        id: "simulate",
+        label: "Run the Simulation",
+        done: simulated,
+        to: "/evaluations",
+      },
     ];
     const done = items.filter((i) => i.done).length;
-    return { items, done, total: items.length, pct: (done / items.length) * 100 };
+    return {
+      items,
+      done,
+      total: items.length,
+      pct: (done / items.length) * 100,
+    };
   }, [status, evalCount]);
 
   const showChecklist = checklist.done < checklist.total;
@@ -110,18 +145,13 @@ export function AppShell() {
   return (
     <div className="flex h-dvh overflow-hidden bg-sidebar">
       <aside className="flex h-full w-64 shrink-0 flex-col px-3.5 pt-3.5 pb-2.5">
-        <div className="flex items-center gap-3 rounded-xl px-2 py-2">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-primary text-[15px] font-semibold text-primary-foreground">
-            W
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-foreground">
-              Wiretap
-            </div>
-            <div className="truncate text-xs text-muted-foreground">
-              Local workspace
-            </div>
-          </div>
+        <div className="flex items-center rounded-xl px-2 py-2.5">
+          <img
+            src="/wiretap-wordmark.png"
+            alt="Wiretap"
+            className="h-6 w-auto max-w-full select-none"
+            draggable={false}
+          />
         </div>
 
         <ScrollArea className="min-h-0 flex-1 py-3.5">
@@ -155,7 +185,11 @@ export function AppShell() {
             <Progress value={checklist.pct} className="mt-2.5 h-[3px]" />
             <CollapsibleContent className="mt-3 flex flex-col gap-2.5">
               {checklist.items.map((item) => (
-                <div key={item.id} className="flex items-center gap-2.5">
+                <Link
+                  key={item.id}
+                  to={item.to}
+                  className="flex items-center gap-2.5 rounded-md py-0.5 transition-colors hover:bg-muted/60"
+                >
                   {item.done ? (
                     <CheckCircle2 className="size-[15px] shrink-0 text-primary" />
                   ) : (
@@ -163,7 +197,7 @@ export function AppShell() {
                   )}
                   <span
                     className={cn(
-                      "text-[13px]",
+                      "min-w-0 flex-1 text-[12.5px] leading-snug",
                       item.done
                         ? "text-muted-foreground line-through"
                         : "text-foreground",
@@ -171,16 +205,16 @@ export function AppShell() {
                   >
                     {item.label}
                   </span>
-                </div>
+                </Link>
               ))}
             </CollapsibleContent>
           </Collapsible>
         )}
 
         <Separator className="mb-2" />
-        <div className="flex items-center gap-2.5 rounded-[10px] px-2 py-2.5">
-          <Avatar size="sm">
-            <AvatarFallback className="bg-primary text-[11px] text-primary-foreground">
+        <div className="flex items-center gap-3 rounded-[10px] px-2.5 py-2.5">
+          <Avatar size="default" className="size-9">
+            <AvatarFallback className="bg-primary text-[11px] font-semibold tracking-wide text-primary-foreground">
               WT
             </AvatarFallback>
           </Avatar>
@@ -201,8 +235,7 @@ export function AppShell() {
             className={cn(
               "w-full",
               // Transcript / scenario detail uses the full canvas width.
-              !isTranscriptPage && !isReportDetail && "mx-auto max-w-[1120px]",
-              isReportDetail && "mx-auto max-w-[1180px]",
+              !isTranscriptPage && "mx-auto max-w-[1120px]",
             )}
           >
             <Outlet />

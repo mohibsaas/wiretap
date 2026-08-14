@@ -228,8 +228,6 @@ def register(app: typer.Typer) -> None:
         async def _simulate_all():
             sem = asyncio.Semaphore(conc)
             results = []
-            advice_lock = asyncio.Lock()
-            latest: dict[str, object] = {"advice": None}
 
             async def one(sc):
                 title = sc.name or sc.id
@@ -254,6 +252,7 @@ def register(app: typer.Typer) -> None:
                             ),
                             timeout=timeout,
                         )
+                        return art
                     except TimeoutError:
                         on_progress(
                             SimEvent(
@@ -284,37 +283,23 @@ def register(app: typer.Typer) -> None:
                             )
                         )
                         return None
-                    if art is None:
-                        return None
-                    async with advice_lock:
-                        results.append(art)
-                        if not no_advice:
-                            from wiretap.eval.advisor import needs_attention
 
-                            if needs_attention(art):
-                                try:
-                                    latest["advice"] = await advise_for_run(
-                                        cfg, list(results), suite_id=suite_id
-                                    )
-                                except Exception:  # noqa: BLE001, S110 — advice never changes the outcome
-                                    pass
-                    return art
+            gathered = await asyncio.gather(*[one(sc) for sc in selected])
+            for item in gathered:
+                if item is not None:
+                    results.append(item)
+            return results
 
-            await asyncio.gather(*[one(sc) for sc in selected])
-            return results, latest.get("advice")
-
-        artifacts: list = []
-        advice = None
         if display is not None:
             try:
                 with display:
-                    artifacts, advice = asyncio.run(_simulate_all())
+                    artifacts = asyncio.run(_simulate_all())
             except KeyboardInterrupt:
                 print("\n[yellow]Interrupted — disconnecting LiveKit sessions…[/yellow]")
                 raise SystemExit(130) from None
         else:
             try:
-                artifacts, advice = asyncio.run(_simulate_all())
+                artifacts = asyncio.run(_simulate_all())
             except KeyboardInterrupt:
                 print("\nInterrupted — disconnecting…")
                 raise SystemExit(130) from None
@@ -348,9 +333,8 @@ def register(app: typer.Typer) -> None:
             incon_arts = [a for a in artifacts if a.meta.get("inconclusive")]
             if detail_arts or incon_arts:
                 console.print()
-                from rich.text import Text as RichText
-
                 from wiretap.cli.style import ACCENT, MUTED
+                from rich.text import Text as RichText
 
                 n_partial = sum(
                     1
@@ -380,6 +364,13 @@ def register(app: typer.Typer) -> None:
                 else:
                     failures += 1
                 print_fail_details(art, console=console)
+
+        advice = None
+        if artifacts and not no_advice:
+            try:
+                advice = asyncio.run(advise_for_run(cfg, artifacts, suite_id=suite_id))
+            except Exception:  # noqa: BLE001 — advice never changes the outcome
+                advice = None
 
         passed = sum(
             1 for a in artifacts if a.passed and not a.meta.get("inconclusive")

@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from wiretap.agent import simulate_scenario
+from wiretap.suite import load_suite
 from wiretap.models import RunAdvice, SimulationArtifact, SuiteConfig
 from wiretap.paths import suite_path
-from wiretap.suite import load_suite
+from wiretap.agent import simulate_scenario
+from datetime import UTC, datetime
 
 BatchStatus = Literal["pending", "running", "completed", "failed"]
 
@@ -84,9 +84,9 @@ def start_batch(
     cwd: Path | None = None,
     scenario_timeout_s: float = DEFAULT_SCENARIO_TIMEOUT_S,
 ) -> BatchRecord:
-    from wiretap.eval.concurrency import resolve_concurrency
-    from wiretap.services.onboard import apply_simulator_config
     from wiretap.suite.agent_override import resolve_transport_choice, with_agent_override
+    from wiretap.services.onboard import apply_simulator_config
+    from wiretap.eval.concurrency import resolve_concurrency
 
     path = suite_path(suite, cwd)
     cfg = load_suite(path)
@@ -207,7 +207,6 @@ async def _run_batch(
         }
     )
     sem = asyncio.Semaphore(batch.concurrency)
-    advice_lock = asyncio.Lock()
     failures = 0
 
     async def one(sc):
@@ -283,9 +282,6 @@ async def _run_batch(
                     "reason": art.judge.reason[:200],
                 }
             )
-            await _refresh_advice(
-                batch, cfg, suite_id, cwd, lock=advice_lock, artifact=art
-            )
             return art
 
     try:
@@ -312,46 +308,35 @@ async def _run_batch(
             }
         )
     finally:
+        await _attach_advice(batch, cfg, suite_id, cwd)
         _persist_evaluation_run(batch, cwd)
         batch.close()
 
 
-async def _refresh_advice(
-    batch: BatchRecord,
-    cfg: SuiteConfig,
-    suite_id: str,
-    cwd: Path | None,
-    *,
-    lock: asyncio.Lock,
-    artifact: SimulationArtifact,
+async def _attach_advice(
+    batch: BatchRecord, cfg: SuiteConfig, suite_id: str, cwd: Path | None
 ) -> None:
-    """Advisor after this test's verdict. Skip passes and inconclusives.
+    """Run-level config advice. Never allowed to disturb the batch."""
+    from wiretap.eval.advisor import advise_for_run
 
-    Serialized because scenarios run concurrently; each call sees every
-    fail/partial already on the batch so later findings can name several calls.
-    """
-    from wiretap.eval.advisor import advise_for_run, needs_attention
-
-    if not needs_attention(artifact):
+    if not batch.results:
         return
-    async with lock:
-        try:
-            batch.advice = await advise_for_run(
-                cfg, list(batch.results), suite_id=suite_id, cwd=cwd
-            )
-        except Exception:  # noqa: BLE001 — advice must never disturb a batch
-            return
-        if batch.advice is None:
-            return
-        batch._emit(
-            {
-                "type": "advice_ready",
-                "batch_id": batch.batch_id,
-                "finding_count": len(batch.advice.findings),
-                "summary": batch.advice.summary,
-            }
+    try:
+        batch.advice = await advise_for_run(
+            cfg, batch.results, suite_id=suite_id, cwd=cwd
         )
-        _persist_evaluation_run(batch, cwd)
+    except Exception:  # noqa: BLE001 — advice must never disturb a batch
+        return
+    if batch.advice is None:
+        return
+    batch._emit(
+        {
+            "type": "advice_ready",
+            "batch_id": batch.batch_id,
+            "finding_count": len(batch.advice.findings),
+            "summary": batch.advice.summary,
+        }
+    )
 
 
 def _persist_evaluation_run(batch: BatchRecord, cwd: Path | None) -> None:
@@ -371,9 +356,7 @@ def _persist_evaluation_run(batch: BatchRecord, cwd: Path | None) -> None:
                 "batch_id": batch.batch_id,
                 "suite_id": batch.suite,
                 "created_at": batch.created_at or _now_iso(),
-                "finished_at": (
-                    _now_iso() if batch.status in {"completed", "failed"} else None
-                ),
+                "finished_at": _now_iso(),
                 "status": batch.status,
                 "error": batch.error,
                 "scenario_ids": batch.scenario_ids,
