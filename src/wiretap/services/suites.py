@@ -8,9 +8,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
-from wiretap.suite import dump_suite, load_suite
 from wiretap.models import SuiteConfig
-from wiretap.paths import suite_path, suites_dir
+from wiretap.paths import ensure_layout, graphs_dir, suite_path, suites_dir
+from wiretap.suite import dump_suite, load_suite
 
 _SAFE_SUITE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,127}$")
 
@@ -76,6 +76,33 @@ def list_suites(cwd: Path | None = None) -> list[dict[str, Any]]:
 
 def get_suite(name: str, cwd: Path | None = None) -> SuiteConfig:
     return load_suite(suite_path(validate_suite_name(name), cwd))
+
+
+def save_suite(name: str, suite: SuiteConfig, cwd: Path | None = None) -> Path:
+    """Write a suite under the data dir. Writes nothing to stdout."""
+    stem = validate_suite_name(name)
+    ensure_layout(cwd)
+    path = suite_path(stem, cwd)
+    dump_suite(suite, path)
+    return path
+
+
+def save_suite_import(
+    name: str,
+    suite: SuiteConfig,
+    graph: Any,
+    cwd: Path | None = None,
+) -> dict[str, str]:
+    """Persist an imported suite + AgentGraph IR. Writes nothing to stdout.
+
+    Shared by the CLI importer and MCP so neither can be talked into writing
+    outside the data directory.
+    """
+    stem = validate_suite_name(name)
+    path = save_suite(stem, suite, cwd)
+    ir_path = graphs_dir(cwd) / f"{stem}.graph.json"
+    ir_path.write_text(graph.model_dump_json(indent=2), encoding="utf-8")
+    return {"name": stem, "suite_path": str(path), "graph_path": str(ir_path)}
 
 
 def suite_public_dict(suite: SuiteConfig, *, name: str) -> dict[str, Any]:
