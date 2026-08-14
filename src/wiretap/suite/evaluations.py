@@ -61,6 +61,9 @@ def list_evaluation_runs(
     ev_dir = evaluations_dir(cwd)
     if ev_dir.is_dir():
         for fp in ev_dir.glob("*.json"):
+            # Live progress sidecar: {batch_id}.progress.json
+            if fp.name.endswith(".progress.json"):
+                continue
             try:
                 data = json.loads(fp.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
@@ -118,7 +121,12 @@ def _merge_run(run: dict[str, Any], sims: list[SimulationArtifact]) -> dict[str,
         out["passed"] = synthesized["passed"]
         out["failed"] = synthesized["failed"]
         out["inconclusive"] = synthesized["inconclusive"]
-        out["total"] = synthesized["total"]
+        # While a run is live, keep the planned scenario count (not just finished sims).
+        if str(out.get("status") or "") in {"running", "pending"}:
+            planned = int(out.get("total") or 0) or len(out.get("scenario_ids") or [])
+            out["total"] = max(planned, int(synthesized["total"] or 0))
+        else:
+            out["total"] = synthesized["total"]
         if not out.get("suite_id"):
             out["suite_id"] = synthesized["suite_id"]
     return out

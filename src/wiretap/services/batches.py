@@ -136,6 +136,17 @@ def start_batch(
         created_at=_now_iso(),
     )
     _batches[batch.batch_id] = batch
+    # Persist progress before returning so the UI can show cases immediately
+    # (the async runner may not have started yet).
+    from wiretap.suite.run_progress import start_run_progress
+
+    start_run_progress(
+        batch_id=batch.batch_id,
+        suite_id=path.stem,
+        scenarios=[(s.id, s.name or s.id) for s in selected],
+        concurrency=conc,
+        cwd=cwd,
+    )
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError as exc:
@@ -194,6 +205,12 @@ async def _run_batch(
     scenario_timeout_s: float = DEFAULT_SCENARIO_TIMEOUT_S,
     pass_threshold: float | None = None,
 ) -> None:
+    from wiretap.agent.events import SimEvent
+    from wiretap.suite.run_progress import (
+        finish_run_progress,
+        touch_scenario,
+    )
+
     threshold = (
         batch.pass_threshold if pass_threshold is None else float(pass_threshold)
     )
@@ -210,6 +227,30 @@ async def _run_batch(
     advice_lock = asyncio.Lock()
     failures = 0
 
+    def on_progress(event: SimEvent) -> None:
+        batch._emit(
+            {
+                "type": "simulation_progress",
+                "batch_id": batch.batch_id,
+                "scenario_id": event.scenario_id,
+                "scenario_name": event.scenario_name,
+                "phase": event.phase,
+                "detail": event.detail,
+                "turn": event.turn,
+                "role": event.role,
+                "text": event.text,
+            }
+        )
+        touch_scenario(
+            batch.batch_id,
+            scenario_id=event.scenario_id,
+            phase=event.phase,
+            detail=event.detail,
+            turn=event.turn,
+            scenario_name=event.scenario_name or None,
+            cwd=cwd,
+        )
+
     async def one(sc):
         nonlocal failures
         title = sc.name or sc.id
@@ -221,6 +262,14 @@ async def _run_batch(
                 "scenario_id": sc.id,
                 "scenario_name": title,
             }
+        )
+        on_progress(
+            SimEvent(
+                phase="queued",
+                scenario_id=sc.id,
+                scenario_name=title,
+                detail="waiting for slot",
+            )
         )
         async with sem:
             batch._emit(
@@ -240,22 +289,33 @@ async def _run_batch(
                         batch_id=batch.batch_id,
                         cwd=cwd,
                         pass_threshold=threshold,
+                        on_progress=on_progress,
                     ),
                     timeout=scenario_timeout_s,
                 )
             except TimeoutError:
                 failures += 1
+                err = (
+                    f"Timed out after {int(scenario_timeout_s)}s "
+                    "(agent dial / call hung)."
+                )
                 batch._emit(
                     {
                         "type": "simulation_failed",
                         "batch_id": batch.batch_id,
                         "scenario_id": sc.id,
                         "scenario_name": title,
-                        "error": (
-                            f"Timed out after {int(scenario_timeout_s)}s "
-                            "(agent dial / call hung)."
-                        ),
+                        "error": err,
                     }
+                )
+                touch_scenario(
+                    batch.batch_id,
+                    scenario_id=sc.id,
+                    phase="failed",
+                    detail=err,
+                    scenario_name=title,
+                    error=err,
+                    cwd=cwd,
                 )
                 return None
             except Exception as exc:
@@ -268,6 +328,15 @@ async def _run_batch(
                         "scenario_name": title,
                         "error": str(exc),
                     }
+                )
+                touch_scenario(
+                    batch.batch_id,
+                    scenario_id=sc.id,
+                    phase="failed",
+                    detail=str(exc)[:200],
+                    scenario_name=title,
+                    error=str(exc)[:200],
+                    cwd=cwd,
                 )
                 return None
             batch.results.append(art)
@@ -282,6 +351,17 @@ async def _run_batch(
                     "inconclusive": bool(art.meta.get("inconclusive")),
                     "reason": art.judge.reason[:200],
                 }
+            )
+            touch_scenario(
+                batch.batch_id,
+                scenario_id=sc.id,
+                phase="finished",
+                detail=art.judge.reason[:200],
+                scenario_name=art.scenario_name or title,
+                simulation_id=art.simulation_id,
+                passed=art.passed,
+                inconclusive=bool(art.meta.get("inconclusive")),
+                cwd=cwd,
             )
             await _refresh_advice(
                 batch, cfg, suite_id, cwd, lock=advice_lock, artifact=art
@@ -313,6 +393,7 @@ async def _run_batch(
         )
     finally:
         _persist_evaluation_run(batch, cwd)
+        finish_run_progress(batch.batch_id, status=batch.status, cwd=cwd)
         batch.close()
 
 

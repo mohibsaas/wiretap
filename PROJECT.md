@@ -49,7 +49,7 @@ wiretap import → edit suite → wiretap simulate → wiretap report
 | Isolation | One scenario = one test agent + one session + one artifact |
 | Concurrency | `asyncio` + semaphore; no shared session state |
 | MCP | Optional `wiretap-mcp` wraps core |
-| License | Apache-2.0 |
+| License | MIT |
 | UI | Local dashboard via `wiretap ui run` (FastAPI/uvicorn core). Cloud out of scope |
 | Cloud | Out of scope; SimulationArtifact schema stays ingest-friendly |
 

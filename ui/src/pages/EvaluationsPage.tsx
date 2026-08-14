@@ -1,6 +1,7 @@
 import {
   ChevronRight,
   CircleDot,
+  Loader2,
   MoreHorizontal,
   Play,
   Plus,
@@ -9,10 +10,11 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { NewRunDialog } from "@/components/NewRunDialog";
 import { FilterMenu } from "@/components/FilterMenu";
 import { PageHeader } from "@/components/PageHeader";
+import { ScenarioProgressRow } from "@/components/ScenarioProgressRow";
 import { TruncatedText } from "@/components/TruncatedText";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,6 +30,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   client,
   type EvaluationRun,
+  type RunProgress,
   type Simulation,
   type SuiteSummary,
 } from "@/lib/api";
@@ -50,6 +53,7 @@ const segmentTabClass = cn(
 
 export function EvaluationsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const runFromUrl = searchParams.get("run");
   const [tab, setTab] = useState<Tab>(runFromUrl ? "simulations" : "runs");
   const [evals, setEvals] = useState<EvaluationRun[]>([]);
@@ -65,33 +69,137 @@ export function EvaluationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [newRunOpen, setNewRunOpen] = useState(false);
   const [seedSuite, setSeedSuite] = useState<string | null>(null);
+  const [activeProgress, setActiveProgress] = useState<RunProgress[]>(() => {
+    const seed = (location.state as { seedProgress?: RunProgress } | null)
+      ?.seedProgress;
+    return seed?.batch_id ? [seed] : [];
+  });
+
+  // Keep optimistic rows from New run / re-run navigation.
+  useEffect(() => {
+    const seed = (location.state as { seedProgress?: RunProgress } | null)
+      ?.seedProgress;
+    if (!seed?.batch_id) return;
+    setActiveProgress((prev) => {
+      if (prev.some((p) => p.batch_id === seed.batch_id)) return prev;
+      return [seed, ...prev];
+    });
+    setSelectedBatchId(seed.batch_id);
+    setTab("simulations");
+  }, [location.state]);
 
   useEffect(() => {
-    const load = () => {
-      void client
-        .evaluations(80)
-        .then(setEvals)
-        .catch((e: Error) => setError(e.message));
-      void client
-        .simulations(120)
-        .then(setSims)
-        .catch(() => setSims([]));
-      void client
-        .suites()
-        .then((rows) => setSuites(rows.filter((s) => !s.error)))
-        .catch(() => setSuites([]));
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [ev, si, su, active] = await Promise.all([
+          client.evaluations(80),
+          client.simulations(120).catch(() => [] as Simulation[]),
+          client.suites().catch(() => [] as SuiteSummary[]),
+          client.activeEvaluationProgress().catch(() => [] as RunProgress[]),
+        ]);
+        if (cancelled) return;
+        setEvals(ev);
+        setSims(si);
+        setSuites(su.filter((s) => !s.error));
+
+        let nextProgress = active;
+        if (selectedBatchId) {
+          try {
+            const one = await client.evaluationProgress(selectedBatchId);
+            nextProgress = [
+              one,
+              ...active.filter((p) => p.batch_id !== one.batch_id),
+            ];
+          } catch {
+            /* finished or not on disk yet — keep optimistic seed below */
+          }
+        }
+        if (cancelled) return;
+        setActiveProgress((prev) => {
+          const byId = new Map(nextProgress.map((p) => [p.batch_id, p]));
+          // Keep seeded rows for the open run until the server has them (or the run ends).
+          for (const p of prev) {
+            if (byId.has(p.batch_id)) continue;
+            if (p.batch_id !== selectedBatchId) continue;
+            const run = ev.find((e) => e.batch_id === p.batch_id);
+            const st = (run?.status || "").toLowerCase();
+            if (run && st !== "running" && st !== "pending") continue;
+            if ((p.scenarios?.length || 0) === 0) continue;
+            byId.set(p.batch_id, p);
+          }
+          return [...byId.values()];
+        });
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
     };
-    load();
-    const onFocus = () => load();
+    void load();
+    const poll = window.setInterval(() => void load(), 1500);
+    const onFocus = () => void load();
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, []);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [selectedBatchId]);
 
   useEffect(() => {
     if (!runFromUrl) return;
     setSelectedBatchId(runFromUrl);
     setTab("simulations");
   }, [runFromUrl]);
+
+  const progressByBatch = useMemo(() => {
+    const map = new Map<string, RunProgress>();
+    for (const p of activeProgress) map.set(p.batch_id, p);
+    return map;
+  }, [activeProgress]);
+
+  const selectedProgress = selectedBatchId
+    ? progressByBatch.get(selectedBatchId) || null
+    : null;
+
+  /** Include live CLI/UI runs even if the stub summary is briefly missing. */
+  const evalsMerged = useMemo(() => {
+    const byId = new Map(evals.map((e) => [e.batch_id, e]));
+    for (const p of activeProgress) {
+      const existing = byId.get(p.batch_id);
+      const scenarioIds =
+        p.scenarios?.map((s) => s.scenario_id).filter(Boolean) || [];
+      if (existing) {
+        byId.set(p.batch_id, {
+          ...existing,
+          status: existing.status || p.status || "running",
+          suite_id: existing.suite_id || p.suite_id || "",
+          scenario_ids:
+            existing.scenario_ids?.length ? existing.scenario_ids : scenarioIds,
+          total:
+            existing.total ||
+            p.total ||
+            scenarioIds.length ||
+            existing.scenario_ids?.length ||
+            0,
+        });
+        continue;
+      }
+      byId.set(p.batch_id, {
+        batch_id: p.batch_id,
+        suite_id: p.suite_id || "",
+        status: "running",
+        created_at: p.created_at,
+        finished_at: null,
+        scenario_ids: scenarioIds,
+        passed: 0,
+        failed: 0,
+        total: p.total || scenarioIds.length || 0,
+      });
+    }
+    return [...byId.values()].sort((a, b) =>
+      String(b.created_at || "").localeCompare(String(a.created_at || "")),
+    );
+  }, [evals, activeProgress]);
 
   const platforms = useMemo(() => {
     const set = new Set<string>();
@@ -100,13 +208,13 @@ export function EvaluationsPage() {
   }, [suites]);
 
   const selectedRun = useMemo(
-    () => evals.find((r) => r.batch_id === selectedBatchId) || null,
-    [evals, selectedBatchId],
+    () => evalsMerged.find((r) => r.batch_id === selectedBatchId) || null,
+    [evalsMerged, selectedBatchId],
   );
 
   const runRows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return evals.filter((r) => {
+    return evalsMerged.filter((r) => {
       if (agentFilter !== "all") {
         const suite = suites.find((s) => s.name === r.suite_id);
         if (suite?.platform !== agentFilter) return false;
@@ -125,7 +233,7 @@ export function EvaluationsPage() {
         r.batch_id.toLowerCase().includes(q)
       );
     });
-  }, [evals, suites, query, statusFilter, agentFilter]);
+  }, [evalsMerged, suites, query, statusFilter, agentFilter]);
 
   const simulationRows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -164,7 +272,57 @@ export function EvaluationsPage() {
     });
   }, [sims, suites, query, statusFilter, agentFilter, selectedBatchId]);
 
-  const sectionCount = tab === "runs" ? runRows.length : simulationRows.length;
+  /** In-progress (or just-started) cases — not only finished pass/fail artifacts. */
+  const liveScenarioRows = useMemo(() => {
+    if (!selectedBatchId || tab !== "simulations") return null;
+    if (statusFilter === "passed" || statusFilter === "failed") return null;
+
+    const fromProgress = selectedProgress?.scenarios;
+    if (fromProgress && fromProgress.length > 0) return fromProgress;
+
+    const st = (selectedRun?.status || "").toLowerCase();
+    const isLive =
+      st === "running" ||
+      st === "pending" ||
+      progressByBatch.has(selectedBatchId);
+    const ids = selectedRun?.scenario_ids || [];
+    if (!isLive || ids.length === 0) return null;
+
+    // Stub rows from the evaluation summary until progress/SSE catches up.
+    return ids.map((id) => ({
+      scenario_id: id,
+      scenario_name: id,
+      phase: "queued",
+      detail: "starting…",
+      turn: 0,
+      simulation_id: null,
+      passed: null,
+      inconclusive: null,
+      error: null,
+    }));
+  }, [
+    selectedBatchId,
+    tab,
+    statusFilter,
+    selectedProgress,
+    selectedRun,
+    progressByBatch,
+  ]);
+
+  // Once the run finishes, prefer finished sim artifacts over stale seed rows.
+  const showLiveCases =
+    (liveScenarioRows?.length || 0) > 0 &&
+    ((selectedRun?.status || "").toLowerCase() === "running" ||
+      (selectedRun?.status || "").toLowerCase() === "pending" ||
+      !!selectedProgress ||
+      simulationRows.length === 0);
+
+  const sectionCount =
+    tab === "runs"
+      ? runRows.length
+      : showLiveCases
+        ? liveScenarioRows!.length
+        : simulationRows.length;
 
   function openNewRun(suite?: string) {
     setSeedSuite(suite || null);
@@ -195,7 +353,7 @@ export function EvaluationsPage() {
       <PageHeader
         title="Simulations"
         subtitle="Pressure-test your agents before your customers do."
-        meta={`${evals.length} run${evals.length === 1 ? "" : "s"}`}
+        meta={`${evalsMerged.length} run${evalsMerged.length === 1 ? "" : "s"}`}
         action={
           <Button onClick={() => openNewRun()}>
             <Plus data-icon="inline-start" />
@@ -303,9 +461,17 @@ export function EvaluationsPage() {
               />
             )}
             {runRows.map((r) => {
-              const verdict = runVerdict(r.passed, r.failed, r.total);
+              const isRunning =
+                (r.status || "").toLowerCase() === "running" ||
+                progressByBatch.has(r.batch_id);
+              const verdict = isRunning
+                ? { label: "Running", variant: "warn" as const }
+                : runVerdict(r.passed, r.failed, r.total);
               const suite = suites.find((s) => s.name === r.suite_id);
-              const rate = passRatePercent(r.passed, r.total);
+              const rate = isRunning
+                ? `${progressByBatch.get(r.batch_id)?.done ?? 0}/${r.total}`
+                : passRatePercent(r.passed, r.total);
+              const live = progressByBatch.get(r.batch_id);
               return (
                 <div
                   key={r.batch_id}
@@ -328,7 +494,11 @@ export function EvaluationsPage() {
                         {[
                           suite?.platform,
                           `${r.total} test${r.total === 1 ? "" : "s"}`,
-                          `${r.passed} passed`,
+                          isRunning
+                            ? live
+                              ? `${live.done ?? 0} done`
+                              : "in progress"
+                            : `${r.passed} passed`,
                           rate,
                         ]
                           .filter(Boolean)
@@ -337,20 +507,29 @@ export function EvaluationsPage() {
                     </div>
                     <div className="hidden items-center gap-4 sm:flex">
                       <div className="flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
-                        <span
-                          className={cn(
-                            "size-1.5 rounded-full",
-                            verdict.variant === "pass" && "bg-pass",
-                            verdict.variant === "fail" && "bg-fail",
-                            verdict.variant === "warn" && "bg-warn",
-                            verdict.variant === "muted" && "bg-muted-foreground",
-                          )}
-                        />
+                        {isRunning ? (
+                          <Loader2
+                            className="size-3.5 animate-spin text-primary/70"
+                            aria-hidden
+                          />
+                        ) : (
+                          <span
+                            className={cn(
+                              "size-1.5 rounded-full",
+                              verdict.variant === "pass" && "bg-pass",
+                              verdict.variant === "fail" && "bg-fail",
+                              verdict.variant === "warn" && "bg-warn",
+                              verdict.variant === "muted" &&
+                                "bg-muted-foreground",
+                            )}
+                          />
+                        )}
                         {verdict.label}
                       </div>
                       <div className="font-mono text-xs text-[var(--wt-text-muted)] tabular-nums">
-                        {formatRelative(r.created_at)} ·{" "}
-                        {runDuration(r.created_at, r.finished_at)}
+                        {formatRelative(r.created_at)}
+                        {!isRunning &&
+                          ` · ${runDuration(r.created_at, r.finished_at)}`}
                       </div>
                     </div>
                   </button>
@@ -379,6 +558,16 @@ export function EvaluationsPage() {
           </div>
         ) : (
           <div className="flex flex-col gap-2.5">
+            {showLiveCases ? (
+              liveScenarioRows!.map((row) => (
+                <ScenarioProgressRow
+                  key={row.scenario_id}
+                  row={row}
+                  batchId={selectedBatchId!}
+                />
+              ))
+            ) : (
+              <>
             {simulationRows.length === 0 && (
               <EmptyRow
                 title="No simulations yet"
@@ -433,6 +622,8 @@ export function EvaluationsPage() {
                 <ChevronRight className="size-3.5 text-muted-foreground" />
               </Link>
             ))}
+              </>
+            )}
           </div>
         )}
       </section>

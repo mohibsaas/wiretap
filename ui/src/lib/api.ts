@@ -186,6 +186,30 @@ export type Batch = {
   advice?: RunAdvice | null;
 };
 
+export type ScenarioProgress = {
+  scenario_id: string;
+  scenario_name?: string;
+  phase: string;
+  detail?: string;
+  turn?: number;
+  simulation_id?: string | null;
+  passed?: boolean | null;
+  inconclusive?: boolean | null;
+  error?: string | null;
+};
+
+export type RunProgress = {
+  batch_id: string;
+  suite_id?: string;
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+  concurrency?: number;
+  total?: number;
+  done?: number;
+  scenarios: ScenarioProgress[];
+};
+
 export type Category = {
   id: string;
   label: string;
@@ -473,6 +497,9 @@ export const client = {
     api<EvaluationRun[]>(`/api/evaluations?limit=${limit}`),
   evaluation: (batchId: string) =>
     api<EvaluationRun>(`/api/evaluations/${batchId}`),
+  evaluationProgress: (batchId: string) =>
+    api<RunProgress>(`/api/progress/${encodeURIComponent(batchId)}`),
+  activeEvaluationProgress: () => api<RunProgress[]>(`/api/progress`),
   previewPrompt: (batchId: string, findingIds: string[]) =>
     api<PromptPreview>(
       `/api/evaluations/${encodeURIComponent(batchId)}/prompt-preview`,
@@ -508,7 +535,12 @@ export const client = {
     transport?: string | null;
     phone?: string | null;
   }) =>
-    api<{ batch_id: string }>("/api/batches", {
+    api<{
+      batch_id: string;
+      suite_id?: string;
+      scenario_ids?: string[];
+      progress?: RunProgress | null;
+    }>("/api/batches", {
       method: "POST",
       body: JSON.stringify(body),
     }),

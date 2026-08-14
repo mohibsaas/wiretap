@@ -126,6 +126,11 @@ def register(app: typer.Typer) -> None:
         from wiretap.suite import load_suite
         from wiretap.suite.agent_override import with_agent_override
         from wiretap.suite.evaluations import save_evaluation_run
+        from wiretap.suite.run_progress import (
+            finish_run_progress,
+            start_run_progress,
+            touch_scenario,
+        )
 
         # Test agent (LLM/STT/TTS) before dialing
         ensure_caller_configured()
@@ -221,9 +226,25 @@ def register(app: typer.Typer) -> None:
             print(f"[cyan]Suite[/cyan] {path}  [cyan]agent[/cyan] {target}")
             print(f"[cyan]Evaluation[/cyan] {batch_id}  [cyan]concurrency[/cyan] {conc}")
 
+        # Shared disk progress so the local UI stays in sync with CLI runs.
+        start_run_progress(
+            batch_id=batch_id,
+            suite_id=suite_id,
+            scenarios=[(sc.id, sc.name or sc.id) for sc in selected],
+            concurrency=conc,
+        )
+
         def on_progress(event: SimEvent) -> None:
             if display is not None:
                 display.on_event(event)
+            touch_scenario(
+                batch_id,
+                scenario_id=event.scenario_id,
+                phase=event.phase,
+                detail=event.detail,
+                turn=event.turn,
+                scenario_name=event.scenario_name or None,
+            )
 
         async def _simulate_all():
             sem = asyncio.Semaphore(conc)
@@ -310,12 +331,14 @@ def register(app: typer.Typer) -> None:
                 with display:
                     artifacts, advice = asyncio.run(_simulate_all())
             except KeyboardInterrupt:
+                finish_run_progress(batch_id, status="failed")
                 print("\n[yellow]Interrupted — disconnecting LiveKit sessions…[/yellow]")
                 raise SystemExit(130) from None
         else:
             try:
                 artifacts, advice = asyncio.run(_simulate_all())
             except KeyboardInterrupt:
+                finish_run_progress(batch_id, status="failed")
                 print("\nInterrupted — disconnecting…")
                 raise SystemExit(130) from None
 
@@ -407,6 +430,7 @@ def register(app: typer.Typer) -> None:
                 "advice": advice.model_dump(mode="json") if advice else None,
             }
         )
+        finish_run_progress(batch_id, status="completed")
 
         if advice:
             print_run_advice(advice, console=console)

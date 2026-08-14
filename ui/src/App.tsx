@@ -9,7 +9,6 @@ import { AppShell } from "@/components/AppShell";
 import { RequireOnboarded } from "@/components/RequireOnboarded";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AgentsPage } from "@/pages/AgentsPage";
-import { BatchPage } from "@/pages/BatchPage";
 import { CategoriesPage } from "@/pages/CategoriesPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { EvaluationsPage } from "@/pages/EvaluationsPage";
@@ -23,6 +22,12 @@ import { SuiteDetailPage } from "@/pages/SuiteDetailPage";
 import { SuitesPage } from "@/pages/SuitesPage";
 
 function RedirectEvaluationRun() {
+  const { batchId = "" } = useParams();
+  const q = batchId ? `?run=${encodeURIComponent(batchId)}` : "";
+  return <Navigate to={`/evaluations${q}`} replace />;
+}
+
+function RedirectBatchToEvaluations() {
   const { batchId = "" } = useParams();
   const q = batchId ? `?run=${encodeURIComponent(batchId)}` : "";
   return <Navigate to={`/evaluations${q}`} replace />;
@@ -64,7 +69,7 @@ export default function App() {
               />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="simulations" element={<Navigate to="/evaluations" replace />} />
-              <Route path="batches/:batchId" element={<BatchPage />} />
+              <Route path="batches/:batchId" element={<RedirectBatchToEvaluations />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Route>

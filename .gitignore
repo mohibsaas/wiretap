@@ -24,6 +24,12 @@ htmlcov/
 !.env.example
 .wiretap/
 
+# Never commit local secrets or dumps
+*.pem
+*.p12
+credentials.json
+service-account*.json
+
 # --- UI (Vite / Node) ---
 ui/node_modules/
 ui/dist/

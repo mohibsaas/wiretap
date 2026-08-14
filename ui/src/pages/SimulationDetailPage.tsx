@@ -593,13 +593,28 @@ export function SimulationDetailPage() {
     setBusy(true);
     setError(null);
     try {
-      const { batch_id } = await client.startBatch({
+      const started = await client.startBatch({
         suite: sim.suite_id,
         all: mode === "fresh",
         scenario: mode === "same" ? sim.scenario_id : undefined,
         concurrency: 4,
       });
-      navigate(`/batches/${batch_id}`);
+      navigate(`/evaluations?run=${encodeURIComponent(started.batch_id)}`, {
+        state: {
+          seedProgress: started.progress || {
+            batch_id: started.batch_id,
+            suite_id: started.suite_id || sim.suite_id,
+            status: "running",
+            scenarios: (started.scenario_ids || []).map((id) => ({
+              scenario_id: id,
+              scenario_name: id,
+              phase: "queued",
+              detail: "starting…",
+              turn: 0,
+            })),
+          },
+        },
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -640,12 +655,9 @@ export function SimulationDetailPage() {
       <header className="shrink-0 border-b border-border px-8 pt-2.5 pb-4">
         <Link
           to={backTo}
-          className="-ml-2 mb-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12.5px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="mb-2 inline-flex items-center gap-1 text-[12.5px] font-medium text-muted-foreground hover:text-foreground"
         >
-          <span aria-hidden className="text-[14px] leading-none">
-            ‹
-          </span>
-          All simulations
+          ← All simulations
         </Link>
 
         <div className="flex flex-wrap items-start justify-between gap-6">

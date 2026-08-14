@@ -391,7 +391,7 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
             raise HTTPException(404, str(exc)) from exc
 
     @app.post("/api/batches")
-    async def api_start_batch(body: StartBatchBody) -> dict[str, str]:
+    async def api_start_batch(body: StartBatchBody) -> dict[str, Any]:
         try:
             batch = start_batch(
                 suite=body.suite,
@@ -409,7 +409,17 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
             )
         except (KeyError, ValueError, FileNotFoundError) as exc:
             raise HTTPException(400, str(exc)) from exc
-        return {"batch_id": batch.batch_id}
+        # Include planned cases so the Simulations list can render immediately
+        # (before disk progress / finished artifacts exist).
+        from wiretap.suite.run_progress import progress_public, read_run_progress
+
+        progress = read_run_progress(batch.batch_id, cwd)
+        return {
+            "batch_id": batch.batch_id,
+            "suite_id": batch.suite,
+            "scenario_ids": list(batch.scenario_ids),
+            "progress": progress_public(progress) if progress else None,
+        }
 
     @app.get("/api/batches/{batch_id}")
     def api_get_batch(batch_id: str) -> dict[str, Any]:
@@ -448,6 +458,39 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
     def api_list_evaluations(limit: int = 40) -> list[dict[str, Any]]:
         """Parent evaluation runs (one suite execution each)."""
         return list_evaluation_runs(cwd, limit=limit)
+
+    # Separate prefix — avoids /api/evaluations/{batch_id} swallowing "progress".
+    @app.get("/api/progress")
+    def api_list_run_progress() -> list[dict[str, Any]]:
+        """Active (CLI or UI) evaluation progress sidecars."""
+        from wiretap.suite.run_progress import list_run_progress, progress_public
+
+        return [progress_public(p) for p in list_run_progress(cwd, active_only=True)]
+
+    @app.get("/api/progress/{batch_id}")
+    def api_get_run_progress(batch_id: str) -> dict[str, Any]:
+        from wiretap.suite.run_progress import progress_public, read_run_progress
+
+        progress = read_run_progress(batch_id, cwd)
+        if not progress:
+            raise HTTPException(404, "no live progress for this evaluation")
+        return progress_public(progress)
+
+    # Legacy alias — must stay above /api/evaluations/{batch_id}.
+    @app.get("/api/evaluations/progress")
+    def api_list_evaluation_progress_legacy() -> list[dict[str, Any]]:
+        from wiretap.suite.run_progress import list_run_progress, progress_public
+
+        return [progress_public(p) for p in list_run_progress(cwd, active_only=True)]
+
+    @app.get("/api/evaluations/{batch_id}/progress")
+    def api_get_evaluation_progress_legacy(batch_id: str) -> dict[str, Any]:
+        from wiretap.suite.run_progress import progress_public, read_run_progress
+
+        progress = read_run_progress(batch_id, cwd)
+        if not progress:
+            raise HTTPException(404, "no live progress for this evaluation")
+        return progress_public(progress)
 
     @app.get("/api/evaluations/{batch_id}")
     def api_get_evaluation(batch_id: str) -> dict[str, Any]:

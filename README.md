@@ -1,202 +1,53 @@
 # wiretap
 
-Test your **live** voice agent from the terminal.
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-Wiretap dials the agent you already run (Vapi, Retell, or a text stub) with its own **test agent**, scores the call with rules + an LLM judge, and stores results under **`~/.wiretap/`** (override with `WIRETAP_HOME`).
+Test your **live** voice agent from the terminal (or a local UI).
+
+Wiretap dials the agent you already run — Retell, Vapi, ElevenLabs, LiveKit, Synthflow, or a phone number — with its own **test agent**, scores the call (rules + LLM judge), and stores results under `~/.wiretap/` (override with `WIRETAP_HOME`).
 
 ```text
    ┌─────────────┐         dial          ┌──────────────────┐
    │   WIRETAP   │ ───────────────────▶  │ Your live agent  │
-   │             │   Vapi / Retell /     │                  │
-   │  test agent │   text                │  (Retell, Vapi,  │
-   │  + judge    │ ◀───────────────────  │   custom, …)     │
+   │  test agent │   web / phone / text  │  (Retell, Vapi…) │
+   │  + judge    │ ◀───────────────────  │                  │
    └─────────────┘         reply         └──────────────────┘
 ```
 
-More detail: [docs/HLD.md](docs/HLD.md) · Plan / status: [PROJECT.md](PROJECT.md)
-
 ---
 
-## Install
+## Quick start
 
-Python ≥3.11.
+**Requirements:** Python ≥3.11, [uv](https://docs.astral.sh/uv/), and API keys for an LLM plus speech (STT/TTS). A platform key (e.g. Retell / Vapi) is needed to dial a live agent.
 
 ```bash
+git clone https://github.com/mohibsaas/wiretap.git
+cd wiretap
 uv sync
-```
-
-**First run (recommended):** interactive setup writes keys to `.env` — same flow as the UI.
-
-```bash
-uv tool install --editable .   # or: source .venv/bin/activate
-wiretap init                   # test agent → optional live agent → suite
-wiretap status                 # what's configured (no secret values)
-```
-
-Or hand-edit secrets:
-
-```bash
-# Default secrets path (created by wiretap init):
-#   ~/.wiretap/.env
-# Optional: also load a project ./ .env for missing keys
-# Override data dir:
-#   export WIRETAP_HOME=/path/to/my-wiretap-data
-```
-
-Core install includes LiteLLM, PyAI (default speech), LiveKit (Retell), and the local UI server.
-
-**Use `wiretap` on your PATH** (recommended while developing):
-
-```bash
 uv tool install --editable .
-wiretap --help
-```
 
-Or activate the project venv: `source .venv/bin/activate`, then `wiretap …`.  
-`uv run wiretap …` also works without activating — same binary, just via uv.
-
-Optional extras: `pstn` (real phone calls), `mcp` (MCP server), `dev` (pytest / ruff).
-
-```bash
-uv sync --extra pstn   # Twilio + SIP softphone, needed for `--transport phone`
-uv sync --extra mcp    # MCP server for coding agents — see "MCP server" below
-uv sync --extra dev
-```
-
----
-
-## Usage
-
-### Quick start (CLI onboarding)
-
-```bash
-wiretap init
-# 1) pick LLM + STT/TTS and paste keys (saved to .env only)
-# 2) optionally connect Retell/Vapi/…
-# 3) optionally generate a category suite
-# 4) optionally set up Twilio for real phone calls
-
+wiretap init                 # test agent → live agent → suite → optional phone
 wiretap simulate -s <suite> --all
 wiretap report
 ```
 
-Import still prompts for a missing platform key when run in a TTY:
+`wiretap init` writes secrets to `~/.wiretap/.env` only (never into suite YAML). Check config without leaking keys:
 
 ```bash
+wiretap status
+```
+
+> **Tip:** Prefer `uv tool install --editable .` so `wiretap` is on your PATH. `uv run wiretap …` works without installing.
+
+### Minimal path (already have keys)
+
+```bash
+# Put keys in ~/.wiretap/.env — see .env.example
 wiretap import retell --agent-id agent_xxx
-# or pass once: --api-key "$RETELL_API_KEY"
+wiretap simulate --suite retell_agent_xxx --all
+wiretap report
 ```
-
-### Known platforms (Vapi / Retell)
-
-Import pulls the live agent config, then **generates category-tagged tests via LLM**
-(defaults: `emotional`, `compliance`, `task` — 3 tests each). Uses your configured
-simulator model (LiteLLM). Regenerate anytime with `wiretap suite generate`.
-
-```bash
-# After wiretap init (or with keys already in .env)
-uv run wiretap import vapi --assistant-id asst_xxx
-# optional: pick categories
-# uv run wiretap import vapi --assistant-id asst_xxx \
-#   --categories emotional,adversarial,task --tests-per-category 5
-# uv run wiretap import vapi --assistant-id asst_xxx --smoke-only   # no category tests
-
-uv run wiretap simulate --suite vapi --all
-uv run wiretap report
-
-# Retell
-uv run wiretap import retell --agent-id agent_xxx
-uv run wiretap simulate --suite retell --all
-```
-
-**Generate or refresh tests later** (keeps the same agent target):
-
-```bash
-uv run wiretap suite categories
-uv run wiretap suite generate --suite vapi \
-  --categories emotional,linguistic,compliance --tests-per-category 5 \
-  --purpose "cancellation and refunds"
-```
-
-Same flow in the UI: connect agent → configure test agent → pick categories → generate.
-
-### Testing over a real phone call
-
-Web or phone is a **per-run choice**, so the same suite works both ways and the
-YAML never changes. `simulate` asks in a terminal, and flags skip the prompts:
-
-```bash
-uv sync --extra pstn
-uv run wiretap simulate --suite retell --all --transport phone
-# non-interactive: name both ends
-# uv run wiretap simulate -s retell --all --transport phone \
-#   --phone +14155550123 --from-number +14155550199
-```
-
-`--phone` is the agent's number; `--from-number` is the Twilio number you dial
-from. Left out, wiretap reads the numbers bound to your agent (Retell and Vapi)
-and offers them, then remembers the pick for that agent.
-
-Wiring is REST-only — no webhooks or tunnels. A local softphone registers to a
-SIP domain wiretap provisions on **your own** Twilio account, and Twilio bridges
-that leg to the agent's number. Set `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`
-(`wiretap init` step 4 prompts for both); `TWILIO_SIP_PASSWORD` is generated and
-rotated for you. Calls cost real Twilio money and run one at a time, since a
-single softphone answers them.
-
-Tool calls are still captured: the platform's own call id is recovered from
-Retell or Vapi after hangup. Other platforms report tools as unobservable.
-
-### Any / custom agent
-
-Hand-write a suite under `~/.wiretap/suites/<name>.yaml` (or `wiretap export` a suite and edit it). Point `agent:` at how wiretap should reach them:
-
-```yaml
-agent:
-  platform: vapi          # vapi | retell | null
-  agent_id: asst_xxx      # platform id when using vapi/retell
-  transport: webrtc       # or text for dry-run
-  token_env: VAPI_API_KEY # env var *name* — never the key itself
-
-# or local text stub (no platform):
-# agent:
-#   platform: null
-#   transport: text
-```
-
-Then:
-
-```bash
-uv run wiretap simulate --suite <name> --all
-uv run wiretap report
-```
-
-`platform: null` + `transport: text` is a local echo stub for dry-runs. To reach a
-custom agent for real, give it a phone number and run `simulate --transport phone`
-— that path only needs a dialable number, not a supported platform API.
-
-### Day-to-day loop
-
-```text
-import or edit suite  →  simulate (--all or --scenario)  →  report
-```
-
----
-
-## Commands
-
-| Command | What it does |
-| --- | --- |
-| `wiretap import …` | Pull platform agent + generate category tests |
-| `wiretap suite …` | list / show / path / categories / generate |
-| `wiretap simulate` | Dial the live agent (`--all` or `--scenario <id>`, `--transport web\|phone`) |
-| `wiretap report` | Summarize local simulation artifacts |
-| `wiretap export` | Copy a suite out for git or sharing |
-| `wiretap ui run` | Local dashboard at http://127.0.0.1:8787 |
-
-**Simulation** = one scenario run. **Batch** = UI Start of 1..N simulations.
-
-Import fills config; it does not dial. `simulate` dials.
 
 ---
 
@@ -204,24 +55,37 @@ Import fills config; it does not dial. `simulate` dials.
 
 ```bash
 cd ui && npm install && npm run build && cd ..
-uv run wiretap ui run
+wiretap ui run
+# → http://127.0.0.1:8787
 ```
 
-First-run onboarding: **Your Agent** → **Test Agent** (LLM + STT/TTS) → **What To Test**. Same `~/.wiretap/` data as the CLI. Secrets stay in `~/.wiretap/.env`; the API only reports whether keys are set.
+Same `~/.wiretap/` data and onboarding as the CLI. For UI development (hot reload):
+
+```bash
+uv run wiretap ui run --no-open          # API on :8787
+cd ui && npm install && npm run dev      # Vite proxies /api
+```
 
 ---
 
-## MCP server
+## Optional extras
 
-Exposes wiretap to coding agents (Cursor, Claude Code, …) over stdio. Same
-`~/.wiretap/` data as the CLI and UI.
+```bash
+uv sync --extra pstn   # real phone calls via Twilio
+uv sync --extra mcp    # MCP server for coding agents
+uv sync --extra dev    # pytest + ruff
+```
+
+**Phone:** web vs phone is a per-run choice (`--transport phone`). Needs Twilio credentials from `wiretap init` (or `.env`).
+
+**MCP:**
 
 ```bash
 uv sync --extra mcp
 uv run wiretap-mcp
 ```
 
-Register it with your client — for Cursor, `.cursor/mcp.json`:
+Cursor example (`.cursor/mcp.json`):
 
 ```json
 {
@@ -231,48 +95,20 @@ Register it with your client — for Cursor, `.cursor/mcp.json`:
 }
 ```
 
-| Tool | What it does |
-| --- | --- |
-| `list_suites` / `get_suite` | Local suites with counts; one suite as JSON |
-| `export_suite` | Suite as YAML text |
-| `simulate_suite` | Dial the live agent (whole suite or one `scenario`), concurrent |
-| `list_simulations` / `get_simulation` | Result summaries; full transcript by id |
-| `list_evaluations` / `get_evaluation` | Runs (batches) with pass/fail counts |
-| `import_agent` | vapi, retell, bland, bolna, elevenlabs, synthflow |
-| `import_livekit_agent` | LiveKit room + agent worker |
-| `generate_suite` / `fill_suite_scenarios` | LLM-generate scenarios |
-| `list_categories` | Categories available to generation |
-
-Simulation tools return summaries rather than transcripts — fetch a transcript
-with `get_simulation` when you need one. Suite names are validated, so a tool
-call cannot read or write outside `~/.wiretap/`.
-
 ---
 
-## How it works
+## Commands
 
-**Voice calls** (Vapi WebSocket, Retell LiveKit): audio goes over the wire. The transport handles STT/TTS; the test agent decides what to say next in text, then TTS speaks it into the call.
-
-**Test agent ladder** (suite YAML):
-
-1. **Prompt** — persona + goal  
-2. **Beats** — pin exact lines on certain turns  
-3. **Phases** — multi-step goals via `flow_phases`  
-
-**Test categories** (many tests per category; catch-all = `other`):
-
-| Id | Focus |
+| Command | What it does |
 | --- | --- |
-| `emotional` | Frustrated, anxious, angry, sensitive |
-| `linguistic` | Ambiguity, repair, interruptions, language |
-| `adversarial` | Jailbreaks, social engineering, PII fishing |
-| `operational` | Hours, handoff, errors, callbacks |
-| `factual` | No invented prices/IDs/features |
-| `compliance` | Disclosures, verification, privacy |
-| `task` | Happy-path / core job completion |
-| `other` | Misc that does not fit above |
-
-Skipped/pending/running in a results grid are **run states**, not generation categories.
+| `wiretap init` | First-run setup (simulator → agent → suite → phone) |
+| `wiretap import …` | Pull a platform agent + generate category tests |
+| `wiretap suite …` | list / show / categories / generate |
+| `wiretap simulate` | Dial (`--all` or `--scenario`, `--transport web\|phone`) |
+| `wiretap report` | Summarize local simulation artifacts |
+| `wiretap export` | Copy a suite out for git or sharing |
+| `wiretap ui run` | Local dashboard |
+| `wiretap status` | What’s configured (no secret values) |
 
 ---
 
@@ -280,50 +116,57 @@ Skipped/pending/running in a results grid are **run states**, not generation cat
 
 | Platform | Live dial | Notes |
 | --- | --- | --- |
-| Vapi | WebSocket PCM (default) | Text Chat if `transport: text` or `room_url: chat` |
-| Retell | LiveKit | Set `RETELL_API_KEY` (needs Testing.Write) |
-| ElevenLabs Agents | ConvAI WebSocket | Set `ELEVENLABS_API_KEY` |
-| LiveKit Agents | LiveKit room | `agent_id` = room name, `room_url` = `wss://…`; `LIVEKIT_API_KEY` + `LIVEKIT_API_SECRET` (or `LIVEKIT_TOKEN`) |
-| Synthflow | WS media | `SYNTHFLOW_API_KEY` + `SYNTHFLOW_FROM_NUMBER` / `SYNTHFLOW_TO_NUMBER` |
-| Custom / stub | Text | Local dry-run (`platform: null`) |
-| Bland / Bolna | Import only | No platform dial; reachable via `--transport phone` |
-| Phone / PSTN | Twilio SIP bridge | Any platform, `uv sync --extra pstn` + `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` |
+| Vapi | WebSocket | `VAPI_API_KEY` |
+| Retell | LiveKit | `RETELL_API_KEY` |
+| ElevenLabs Agents | ConvAI WS | `ELEVENLABS_API_KEY` |
+| LiveKit Agents | LiveKit room | `LIVEKIT_API_KEY` + `LIVEKIT_API_SECRET` |
+| Synthflow | WS media | `SYNTHFLOW_API_KEY` + from/to numbers |
+| Bland / Bolna | Import only | Dial via `--transport phone` |
+| Custom / stub | Text | `platform: null`, `transport: text` |
+| Phone / PSTN | Twilio SIP | `uv sync --extra pstn` |
+
+Secrets belong in `~/.wiretap/.env` or the environment. Suite YAML stores agent ids and `token_env` **names**, never key values. See [`.env.example`](.env.example).
 
 ---
 
-## Layout
+## How scoring works
+
+- **Rules** check hard constraints from the suite.
+- **LLM judge** scores goal match (pass / partial / fail).
+- **Suggestions** appear on failures only.
+- Optional **advisor** can suggest config fixes after failing calls.
+
+Test categories used for generation: `emotional`, `linguistic`, `adversarial`, `operational`, `factual`, `compliance`, `task`, `other`.
+
+---
+
+## Data layout
 
 ```text
-src/wiretap/
-  agent/         # test agent (beats, orchestrator, simulate)
-  suite/         # suite YAML + simulation artifacts
-  transport/     # Vapi / Retell / ElevenLabs / LiveKit / Synthflow / text
-  providers/     # LLM + STT/TTS
-  eval/          # rules + judge
-  importers/     # platform import + AgentGraph
-  services/      # local UI helpers
-  cli/           # Typer commands
-  ui/            # FastAPI + static
-  mcp/           # optional MCP server
-  models.py
-  paths.py
-
-.wiretap/        # default: ~/.wiretap  (or $WIRETAP_HOME)
-  suites/
-  simulations/
-  graphs/
+~/.wiretap/          # or $WIRETAP_HOME
+  .env               # secrets (from wiretap init)
+  suites/            # YAML suites
+  simulations/       # call artifacts + transcripts
+  evaluations/       # run summaries + live progress
   onboard.json
-  .env           # secrets (also created by wiretap init)
 ```
+
+Architecture notes: [docs/HLD.md](docs/HLD.md).
 
 ---
 
-## Security
+## Contributing
 
-- Secrets in **`.env` / environment only** (see `.env.example`)
-- Suite YAML stores agent ids and `token_env` **names**, never key values
-- Judge suggestions appear **on fail only**
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Security reports: [SECURITY.md](SECURITY.md) — please use private disclosure, not public issues.
+
+```bash
+uv sync --extra dev
+uv run ruff check src tests
+uv run pytest -q
+```
 
 ## License
 
-Apache-2.0
+[MIT](LICENSE)

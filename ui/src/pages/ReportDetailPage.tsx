@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Check,
-  ChevronLeft,
   Download,
   Lock,
   RefreshCw,
@@ -610,10 +609,9 @@ function BackLink() {
   return (
     <Link
       to="/reports"
-      className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium text-muted-foreground transition-colors hover:bg-[var(--wt-section)] hover:text-foreground"
+      className="inline-flex items-center gap-1 text-[12.5px] font-medium text-muted-foreground hover:text-foreground"
     >
-      <ChevronLeft className="size-3.5" />
-      Reports
+      ← Reports
     </Link>
   );
 }

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "CLI-first voice agent test simulator — call live agents, score with LLM-as-judge."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
+license = { text = "MIT" }
 authors = [{ name = "wiretap contributors" }]
 keywords = ["voice", "agents", "testing", "eval", "webrtc", "ci"]
 dependencies = [
@@ -20,6 +20,12 @@ dependencies = [
   "pyai-sdk>=0.2.0",
   "livekit>=0.17.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mohibsaas/wiretap"
+Repository = "https://github.com/mohibsaas/wiretap"
+Issues = "https://github.com/mohibsaas/wiretap/issues"
+"Bug Tracker" = "https://github.com/mohibsaas/wiretap/issues"
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.0.0"]
