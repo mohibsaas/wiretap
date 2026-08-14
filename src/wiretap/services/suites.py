@@ -31,8 +31,7 @@ class SuiteCasePatch(BaseModel):
 
 
 class UpdateSuiteBody(BaseModel):
-    cases: list[SuiteCasePatch] | None = Field(default=None, max_length=500)
-    title: str | None = Field(default=None, max_length=200)
+    cases: list[SuiteCasePatch] = Field(min_length=1, max_length=500)
 
 
 def validate_suite_name(name: str) -> str:
@@ -65,7 +64,6 @@ def list_suites(cwd: Path | None = None) -> list[dict[str, Any]]:
         out.append(
             {
                 "name": fp.stem,
-                "title": (suite.title or "").strip() or fp.stem,
                 "path": str(fp),
                 "scenario_count": len(suite.scenarios),
                 "persona_count": len(suite.personas),
@@ -84,9 +82,7 @@ def suite_public_dict(suite: SuiteConfig, *, name: str) -> dict[str, Any]:
     """Serialize suite for API — never include secret values."""
     data = suite.model_dump(mode="json")
     # token_env is an env *name*, not a secret — keep it
-    data["name"] = name
-    data["title"] = (suite.title or "").strip() or name
-    return data
+    return {"name": name, **data}
 
 
 def update_suite_cases(
@@ -94,78 +90,44 @@ def update_suite_cases(
     body: UpdateSuiteBody,
     cwd: Path | None = None,
 ) -> SuiteConfig:
-    """Patch suite title and/or scenario + persona fields; preserve agent/models/etc."""
+    """Patch scenario + persona fields for existing cases; preserve agent/models/etc."""
     stem = validate_suite_name(name)
     path = suite_path(stem, cwd)
     suite = load_suite(path)
 
-    if body.title is not None:
-        cleaned = body.title.strip()
-        if len(cleaned) > 200:
-            raise ValueError("title too long")
-        suite.title = cleaned
+    by_scenario = {c.scenario_id: c for c in body.cases}
+    personas_by_id = {p.id: p for p in suite.personas}
 
-    if body.cases is not None:
-        if len(body.cases) < 1:
-            raise ValueError("cases must not be empty")
-        by_scenario = {c.scenario_id: c for c in body.cases}
-        personas_by_id = {p.id: p for p in suite.personas}
+    for scenario in suite.scenarios:
+        patch = by_scenario.get(scenario.id)
+        if not patch:
+            continue
+        if patch.persona_id != scenario.persona_id:
+            raise ValueError(
+                f"persona_id mismatch for scenario {scenario.id!r}: "
+                f"expected {scenario.persona_id!r}"
+            )
+        scenario.name = patch.name.strip() or scenario.name
+        scenario.category = (patch.category or "").strip() or None
+        scenario.max_turns = patch.max_turns
+        if patch.success_criteria is not None:
+            scenario.success_criteria = patch.success_criteria.strip()
+        if patch.rubric is not None:
+            scenario.rubric = patch.rubric.strip()
 
-        for scenario in suite.scenarios:
-            patch = by_scenario.get(scenario.id)
-            if not patch:
-                continue
-            if patch.persona_id != scenario.persona_id:
-                raise ValueError(
-                    f"persona_id mismatch for scenario {scenario.id!r}: "
-                    f"expected {scenario.persona_id!r}"
-                )
-            scenario.name = patch.name.strip() or scenario.name
-            scenario.category = (patch.category or "").strip() or None
-            scenario.max_turns = patch.max_turns
-            if patch.success_criteria is not None:
-                scenario.success_criteria = patch.success_criteria.strip()
-            if patch.rubric is not None:
-                scenario.rubric = patch.rubric.strip()
-
-            persona = personas_by_id.get(scenario.persona_id)
-            if persona is None:
-                raise ValueError(f"persona not found: {scenario.persona_id!r}")
-            persona.name = patch.name.strip() or persona.name
-            persona.identity = patch.identity.strip()
-            persona.goal = patch.goal.strip()
-            cleaned = [
-                c.strip() for c in patch.constraints if isinstance(c, str) and c.strip()
-            ]
-            if len(cleaned) > 40:
-                raise ValueError("too many constraints")
-            for item in cleaned:
-                if len(item) > 500:
-                    raise ValueError("constraint too long")
-            persona.constraints = cleaned
-
-    if body.title is None and body.cases is None:
-        raise ValueError("nothing to update")
+        persona = personas_by_id.get(scenario.persona_id)
+        if persona is None:
+            raise ValueError(f"persona not found: {scenario.persona_id!r}")
+        persona.name = patch.name.strip() or persona.name
+        persona.identity = patch.identity.strip()
+        persona.goal = patch.goal.strip()
+        cleaned = [c.strip() for c in patch.constraints if isinstance(c, str) and c.strip()]
+        if len(cleaned) > 40:
+            raise ValueError("too many constraints")
+        for item in cleaned:
+            if len(item) > 500:
+                raise ValueError("constraint too long")
+        persona.constraints = cleaned
 
     dump_suite(suite, path)
     return suite
-
-
-def delete_suite(name: str, cwd: Path | None = None) -> dict[str, Any]:
-    """Remove a suite YAML and its agent graph IR, if present."""
-    from wiretap.paths import graphs_dir
-
-    stem = validate_suite_name(name)
-    path = suite_path(stem, cwd)
-    if not path.is_file():
-        raise FileNotFoundError(f"Suite not found: {stem}")
-
-    path.unlink()
-    removed = [str(path)]
-
-    graph = graphs_dir(cwd) / f"{stem}.graph.json"
-    if graph.is_file():
-        graph.unlink()
-        removed.append(str(graph))
-
-    return {"name": stem, "removed": removed}

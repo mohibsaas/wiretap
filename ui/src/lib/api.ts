@@ -1,6 +1,5 @@
 export type SuiteSummary = {
   name: string;
-  title?: string;
   path: string;
   scenario_count?: number;
   persona_count?: number;
@@ -11,7 +10,6 @@ export type SuiteSummary = {
 
 export type SuiteDetail = {
   name: string;
-  title?: string;
   agent: {
     transport: string;
     platform?: string | null;
@@ -124,7 +122,30 @@ export type AdviceFinding = {
   confidence?: "high" | "medium" | "low" | string;
 };
 
-/** Run-level agent-improvement advice, generated once per evaluation run. */
+export type PromptDiffHunk = {
+  op: "equal" | "insert" | "delete" | string;
+  text: string;
+};
+
+export type SkippedAddition = {
+  id?: string;
+  text: string;
+  reason?: string;
+};
+
+export type PromptPreview = {
+  platform: string;
+  agent_id: string;
+  current: string;
+  additions?: string[];
+  skipped?: SkippedAddition[];
+  diff?: PromptDiffHunk[];
+  draft: string;
+  current_hash: string;
+  applied_finding_ids: string[];
+  writable: boolean;
+  unchanged?: boolean;
+};
 export type RunAdvice = {
   summary?: string;
   findings: AdviceFinding[];
@@ -168,12 +189,6 @@ export type Category = {
   label: string;
   description: string;
   max_tests: number;
-  examples?: {
-    name: string;
-    identity: string;
-    goal: string;
-    say: string;
-  }[];
 };
 
 export type VoiceOption = {
@@ -271,6 +286,19 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text();
+    try {
+      const parsed = JSON.parse(text) as {
+        detail?: string | { message?: string; detail?: string; code?: string };
+      };
+      const d = parsed.detail;
+      if (typeof d === "string" && d.trim()) throw new Error(d);
+      if (d && typeof d === "object") {
+        const msg = d.message || d.detail;
+        if (msg) throw new Error(msg);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message !== text) throw err;
+    }
     throw new Error(text || res.statusText);
   }
   return res.json() as Promise<T>;
@@ -279,7 +307,6 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export const client = {
   health: () => api<{ version: string }>("/api/health"),
   onboardStatus: () => api<OnboardStatus>("/api/onboard/status"),
-  categories: () => api<Category[]>("/api/categories"),
   providers: () => api<ProviderCatalog>("/api/providers"),
   llmModels: (provider: string, apiKey?: string | null) =>
     api<{
@@ -393,23 +420,34 @@ export const client = {
   agents: () => api<AgentRow[]>("/api/agents"),
   suites: () => api<SuiteSummary[]>("/api/suites"),
   suite: (name: string) => api<SuiteDetail>(`/api/suites/${encodeURIComponent(name)}`),
-  updateSuite: (
-    name: string,
-    body: { cases?: SuiteCaseUpdate[]; title?: string },
-  ) =>
+  updateSuite: (name: string, cases: SuiteCaseUpdate[]) =>
     api<SuiteDetail>(`/api/suites/${encodeURIComponent(name)}`, {
       method: "PUT",
-      body: JSON.stringify(body),
+      body: JSON.stringify({ cases }),
     }),
-  deleteSuite: (name: string) =>
-    api<{ name: string; removed: string[] }>(
-      `/api/suites/${encodeURIComponent(name)}`,
-      { method: "DELETE" },
-    ),
   evaluations: (limit = 40) =>
     api<EvaluationRun[]>(`/api/evaluations?limit=${limit}`),
   evaluation: (batchId: string) =>
     api<EvaluationRun>(`/api/evaluations/${batchId}`),
+  previewPrompt: (batchId: string, findingIds: string[]) =>
+    api<PromptPreview>(
+      `/api/evaluations/${encodeURIComponent(batchId)}/prompt-preview`,
+      {
+        method: "POST",
+        body: JSON.stringify({ finding_ids: findingIds }),
+      },
+    ),
+  applyPrompt: (batchId: string, findingIds: string[], currentHash: string) =>
+    api<{ ok: boolean; platform: string; agent_id: string }>(
+      `/api/evaluations/${encodeURIComponent(batchId)}/prompt-apply`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          finding_ids: findingIds,
+          current_hash: currentHash,
+        }),
+      },
+    ),
   simulations: (limit = 40) =>
     api<Simulation[]>(`/api/simulations?limit=${limit}`),
   simulation: (id: string) => api<Simulation>(`/api/simulations/${id}`),

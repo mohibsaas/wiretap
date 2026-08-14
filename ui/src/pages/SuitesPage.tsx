@@ -37,9 +37,7 @@ export function SuitesPage() {
           <Link key={s.name} to={`/suites/${s.name}`} className="block">
             <Card className="transition-colors hover:bg-muted/40">
               <CardHeader className="flex flex-row items-center justify-between gap-4">
-                <CardTitle className="text-base">
-                  {(s.title || "").trim() || s.name}
-                </CardTitle>
+                <CardTitle className="font-mono text-base">{s.name}</CardTitle>
                 <div className="flex gap-2">
                   {s.platform && <Badge variant="muted">{s.platform}</Badge>}
                   {s.transport && <Badge>{s.transport}</Badge>}

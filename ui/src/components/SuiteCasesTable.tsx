@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 const COLS =
-  "grid-cols-[48px_minmax(160px,200px)_120px_minmax(180px,1fr)_minmax(180px,1fr)_minmax(140px,0.9fr)_72px]";
+  "grid-cols-[48px_minmax(160px,200px)_120px_minmax(140px,200px)_minmax(180px,1fr)_minmax(180px,1fr)_minmax(140px,0.9fr)_72px]";
 
 /** Invisible chrome so edit controls occupy the same box as plain text. */
 const quietField =
@@ -26,7 +26,7 @@ export function SuiteCasesTable({
   return (
     <div className="overflow-hidden rounded-[14px] border border-border bg-card">
       <div className="overflow-x-auto">
-        <div className="min-w-[980px]">
+        <div className="min-w-[1180px]">
           <div
             className={cn(
               "grid items-center gap-x-3 border-b border-border bg-[var(--wt-section)] px-5 py-2.5 text-[10.5px] font-semibold tracking-[0.06em] text-muted-foreground uppercase",
@@ -36,6 +36,7 @@ export function SuiteCasesTable({
             <div>#</div>
             <div>Persona</div>
             <div>Category</div>
+            <div>ID</div>
             <div>Identity</div>
             <div>Goal</div>
             <div>Constraints</div>
@@ -98,6 +99,10 @@ export function SuiteCasesTable({
                       —
                     </span>
                   )}
+                </div>
+
+                <div className="break-all font-mono text-xs leading-snug text-muted-foreground">
+                  {row.scenarioId}
                 </div>
 
                 <Cell
