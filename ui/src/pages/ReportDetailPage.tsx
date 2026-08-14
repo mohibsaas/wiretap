@@ -2,12 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Check,
+  ChevronLeft,
   Download,
   Lock,
   RefreshCw,
   Share2,
   X,
 } from "lucide-react";
+import {
+  ApplyPromptDialog,
+  promptFindingIdsForScenario,
+  usePromptApply,
+} from "@/components/ApplyPromptDialog";
 import { NewRunDialog } from "@/components/NewRunDialog";
 import {
   ReportBadgePlate,
@@ -29,11 +35,10 @@ import {
 import { formatRelative } from "@/lib/format";
 import {
   REPORT_CATEGORIES,
-  badgePackSvg,
   buildReport,
   categoryLabel,
-  downloadJson,
-  downloadText,
+  downloadBadgePack,
+  downloadBadgePng,
   indexSuiteScenarios,
   resolveAgentName,
   scoreBand,
@@ -59,10 +64,17 @@ export function ReportDetailPage() {
   const [badgeId, setBadgeId] = useState<string | null>(null);
   const [rerunOpen, setRerunOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [appliedFixes, setAppliedFixes] = useState<Set<string>>(() => new Set());
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [pendingFixId, setPendingFixId] = useState<string | null>(null);
+  const apply = usePromptApply(batchId);
 
   useEffect(() => {
     let alive = true;
     setError(null);
+    setAppliedFixes(new Set());
+    setApplyOpen(false);
+    setPendingFixId(null);
     void client
       .evaluation(batchId)
       .then((detail) => {
@@ -123,18 +135,23 @@ export function ReportDetailPage() {
     }
   }
 
-  function exportRun() {
-    if (!run) return;
-    downloadJson(`wiretap-report-${reportHashSafe(run.batch_id)}.json`, run);
+  async function exportRun() {
+    if (!report) return;
+    try {
+      const { downloadReportPdf } = await import("@/lib/reportPdf");
+      downloadReportPdf(report);
+    } catch {
+      setError("Could not export the report PDF.");
+    }
   }
 
-  function downloadBadges() {
+  async function downloadBadges() {
     if (!report) return;
-    downloadText(
-      `wiretap-badges-${report.hash}.svg`,
-      badgePackSvg(report),
-      "image/svg+xml",
-    );
+    try {
+      await downloadBadgePack(report);
+    } catch {
+      setError("Could not download the badge pack.");
+    }
   }
 
   if (error && !run) {
@@ -187,7 +204,7 @@ export function ReportDetailPage() {
             variant="outline"
             size="sm"
             className="rounded-full"
-            onClick={exportRun}
+            onClick={() => void exportRun()}
           >
             <Download data-icon="inline-start" />
             Export
@@ -323,25 +340,22 @@ export function ReportDetailPage() {
               Badges
             </div>
             <div className="mt-[7px] mb-[3px] text-[17px] font-semibold">
-              {report.full
-                ? earnedCount
-                  ? `${earnedCount} of 4 badges earned`
-                  : "No badges earned from this run"
-                : "Badges locked"}
+              {earnedCount
+                ? `${earnedCount} of ${REPORT_CATEGORIES.length} badges earned`
+                : "No badges earned from this run"}
             </div>
             <p className="max-w-[620px] text-[12.5px] leading-relaxed text-muted-foreground text-pretty">
-              {report.full
-                ? "Full coverage, so every badge was assessed. Open one to see its validity and the score it was issued against."
-                : `A badge needs one run across all ${REPORT_CATEGORIES.length} categories. This run covered ${report.covered.length} — re-run with the full set to unlock them.`}
+              Pass every simulation in a category to unlock its shield. Open one
+              to see the tests it was issued against.
             </p>
           </div>
-          {report.full && (
+          {earnedCount > 0 && (
             <Button
               type="button"
               variant="ghost"
               size="sm"
               className="shrink-0 rounded-full"
-              onClick={downloadBadges}
+              onClick={() => void downloadBadges()}
             >
               <Download data-icon="inline-start" />
               Download badge pack
@@ -359,7 +373,7 @@ export function ReportDetailPage() {
                 b.met ? "border-primary" : "border-border",
               )}
             >
-              <ReportBadgePlate badge={b} period={report.period} />
+              <ReportBadgePlate badge={b} />
               <div className="min-w-0 flex-1">
                 <div className="mb-1 flex items-center gap-1.5">
                   <span className="text-[13.5px] font-semibold leading-snug">
@@ -367,10 +381,8 @@ export function ReportDetailPage() {
                   </span>
                   {b.met ? (
                     <Check className="size-[13px] shrink-0 text-primary" />
-                  ) : b.locked ? (
-                    <Lock className="size-[13px] shrink-0 text-muted-foreground" />
                   ) : (
-                    <X className="size-[13px] shrink-0 text-muted-foreground" />
+                    <Lock className="size-[13px] shrink-0 text-muted-foreground" />
                   )}
                 </div>
                 <div
@@ -381,14 +393,12 @@ export function ReportDetailPage() {
                       : "text-[var(--wt-text-muted)]",
                   )}
                 >
-                  {b.locked ? "Locked" : b.met ? "Earned" : "Not attained"}
+                  {b.met ? "Earned" : "Locked"}
                 </div>
                 <div className="mt-1 text-[11.5px] leading-snug text-[var(--wt-text-muted)]">
-                  {b.locked
-                    ? `Needs all ${REPORT_CATEGORIES.length} categories`
-                    : b.met
-                      ? `Valid to ${report.expires}`
-                      : `Needs ${b.min}, scored ${b.value}`}
+                  {b.testCount === 0
+                    ? "No tests in this run"
+                    : `${b.passedCount} of ${b.testCount} passed`}
                 </div>
               </div>
             </button>
@@ -432,17 +442,18 @@ export function ReportDetailPage() {
         </div>
 
         <div className="overflow-hidden rounded-2xl border border-border bg-card">
-          <div className="grid grid-cols-[minmax(0,1.45fr)_minmax(88px,0.7fr)_minmax(0,1.55fr)_minmax(76px,0.5fr)_minmax(0,1.55fr)] gap-3.5 border-b border-border bg-[var(--wt-section)] px-[18px] py-[13px]">
-            {["Test", "Category", "Expected outcome", "Result", "Suggested fix"].map(
-              (h) => (
-                <div
-                  key={h}
-                  className="text-[10.5px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase"
-                >
-                  {h}
-                </div>
-              ),
-            )}
+          <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,1.7fr)_84px_minmax(0,1.6fr)_108px] gap-3.5 border-b border-border bg-[var(--wt-section)] px-[18px] py-[13px]">
+            {["Test", "Expected outcome", "Result", "Suggested fix"].map((h) => (
+              <div
+                key={h}
+                className="text-[10.5px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase"
+              >
+                {h}
+              </div>
+            ))}
+            <div className="text-right text-[10.5px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase">
+              Action
+            </div>
           </div>
           {shownRows.length === 0 && (
             <div className="px-[18px] py-10 text-center text-[13px] text-muted-foreground">
@@ -455,12 +466,26 @@ export function ReportDetailPage() {
             const sim = row.simulation;
             const to = `/evaluations/${encodeURIComponent(report.batchId)}/scenarios/${encodeURIComponent(sim.simulation_id)}`;
             const pass = !row.flagged;
+            const applied = appliedFixes.has(sim.simulation_id);
+            const findingIds = promptFindingIdsForScenario(
+              run?.advice?.findings,
+              sim.scenario_id,
+            );
+            const canApply = !pass && !applied && findingIds.length > 0;
             return (
-              <Link
+              <div
                 key={sim.simulation_id}
-                to={to}
+                role="link"
+                tabIndex={0}
+                onClick={() => navigate(to)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    navigate(to);
+                  }
+                }}
                 className={cn(
-                  "grid grid-cols-[minmax(0,1.45fr)_minmax(88px,0.7fr)_minmax(0,1.55fr)_minmax(76px,0.5fr)_minmax(0,1.55fr)] items-start gap-3.5 px-[18px] py-3.5 transition-colors hover:bg-[var(--wt-section)]",
+                  "grid cursor-pointer grid-cols-[minmax(0,1.5fr)_minmax(0,1.7fr)_84px_minmax(0,1.6fr)_108px] items-start gap-3.5 px-[18px] py-3.5 transition-colors hover:bg-[var(--wt-section)]",
                   i > 0 && "border-t border-border",
                 )}
               >
@@ -468,30 +493,27 @@ export function ReportDetailPage() {
                   <div className="text-[13.5px] font-medium leading-snug text-pretty">
                     {sim.scenario_name || sim.scenario_id}
                   </div>
-                  <div className="mt-1 font-mono text-[11px] text-[var(--wt-text-muted)]">
-                    {sim.simulation_id.slice(0, 12)}
+                  <div className="mt-[7px] flex min-w-0 items-center gap-2">
+                    <span className="inline-block max-w-full truncate rounded-full border border-border bg-[var(--wt-section)] px-[9px] py-[3px] text-[11.5px] leading-snug text-muted-foreground">
+                      {row.categoryLabel}
+                    </span>
+                    <span className="font-mono text-[11px] text-[var(--wt-text-muted)]">
+                      {sim.simulation_id.slice(0, 12)}
+                    </span>
                   </div>
-                </div>
-                <div>
-                  <span className="inline-block max-w-full truncate rounded-full border border-border bg-[var(--wt-section)] px-[9px] py-[3px] text-[11.5px] leading-snug text-muted-foreground">
-                    {row.categoryLabel}
-                  </span>
                 </div>
                 <div className="text-[12.5px] leading-relaxed text-muted-foreground text-pretty">
                   {row.expected}
                 </div>
-                <div className="flex flex-col items-start gap-1.5">
+                <div>
                   <span
                     className={cn(
-                      "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11.5px] font-semibold",
+                      "inline-flex min-w-11 items-center justify-center rounded-full border px-2.5 py-[3px] font-mono text-[12.5px] font-semibold",
                       pass
                         ? "border-primary bg-[var(--wt-green-100)] text-[var(--wt-green-700)]"
-                        : "border-[var(--wt-danger)] bg-card text-[var(--wt-danger)]",
+                        : "border-[var(--wt-danger)] bg-[var(--wt-danger-surface)] text-[var(--wt-danger)]",
                     )}
                   >
-                    {pass ? "Pass" : "Fail"}
-                  </span>
-                  <span className="font-mono text-[11.5px] text-[var(--wt-text-muted)]">
                     {row.score == null ? "—" : row.score}
                   </span>
                 </div>
@@ -505,11 +527,60 @@ export function ReportDetailPage() {
                 >
                   {row.fix || "—"}
                 </div>
-              </Link>
+                <div className="flex justify-end">
+                  {canApply ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-auto rounded-full px-3.5 py-1.5 text-xs font-semibold"
+                      disabled={apply.busy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPendingFixId(sim.simulation_id);
+                        setApplyOpen(true);
+                        void apply.openPreview(findingIds);
+                      }}
+                    >
+                      Apply fix
+                    </Button>
+                  ) : applied ? (
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[11.5px] font-semibold text-[var(--wt-green-700)]">
+                      <Check className="size-3" />
+                      Applied
+                    </span>
+                  ) : null}
+                </div>
+              </div>
             );
           })}
         </div>
       </div>
+
+      <ApplyPromptDialog
+        open={applyOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            apply.close();
+            setApplyOpen(false);
+            setPendingFixId(null);
+          }
+        }}
+        preview={apply.preview}
+        busy={apply.busy}
+        error={apply.error}
+        onConfirm={() => {
+          void (async () => {
+            if (!(await apply.confirmApply()) || !pendingFixId) return;
+            setAppliedFixes((prev) => {
+              const next = new Set(prev);
+              next.add(pendingFixId);
+              return next;
+            });
+            setApplyOpen(false);
+            setPendingFixId(null);
+          })();
+        }}
+      />
 
       <BadgeModal
         open={!!badgeId}
@@ -519,18 +590,10 @@ export function ReportDetailPage() {
         report={report}
         badge={selectedBadge}
         onCta={() => {
-          if (!selectedBadge) return;
-          if (selectedBadge.locked) {
-            setBadgeId(null);
-            if (report.suiteId) navigate(`/suites/${encodeURIComponent(report.suiteId)}`);
-            return;
-          }
-          if (selectedBadge.met) {
-            downloadBadges();
-            return;
-          }
-          setBadgeId(null);
-          setRerunOpen(true);
+          if (!selectedBadge?.met) return;
+          void downloadBadgePng(selectedBadge).catch(() => {
+            setError("Could not download the badge.");
+          });
         }}
       />
 
@@ -547,15 +610,12 @@ function BackLink() {
   return (
     <Link
       to="/reports"
-      className="inline-flex items-center gap-1 text-[12.5px] font-medium text-muted-foreground hover:text-foreground"
+      className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium text-muted-foreground transition-colors hover:bg-[var(--wt-section)] hover:text-foreground"
     >
-      ← Reports
+      <ChevronLeft className="size-3.5" />
+      Reports
     </Link>
   );
-}
-
-function reportHashSafe(batchId: string): string {
-  return batchId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) || "report";
 }
 
 function BadgeModal({
@@ -572,21 +632,12 @@ function BadgeModal({
   onCta: () => void;
 }) {
   if (!badge) return null;
-  const ctaLabel = badge.locked
-    ? `Run all ${REPORT_CATEGORIES.length} categories`
-    : badge.met
-      ? "Download badge"
-      : "Re-run this suite";
-  const note = badge.locked
-    ? `Badges are issued from full-coverage runs only. This run covered ${report.covered.length} of ${REPORT_CATEGORIES.length} categories, so nothing can be certified yet — point the suite at every category and re-run.`
-    : badge.met
-      ? "Embed it on your site or drop it in a security review. The badge links back to this report, so anyone can see the run behind it."
-      : "You ran full coverage, so this badge is live — the score just came in under the bar. Fix the flagged checks below and re-run to claim it.";
-  const statusLabel = badge.locked
-    ? "Locked"
-    : badge.met
-      ? `Earned · ${report.issued}`
-      : "Not attained";
+  const note = badge.met
+    ? "Embed it on your site or drop it in a security review. The badge is from this run, so anyone can see the tests behind it."
+    : badge.testCount === 0
+      ? `No ${categoryLabel(badge.cat)} simulations ran in this report, so this shield stays locked.`
+      : `${badge.passedCount} of ${badge.testCount} ${categoryLabel(badge.cat)} simulations passed. Fix the flagged checks and re-run to claim it.`;
+  const statusLabel = badge.met ? `Earned · ${report.issued}` : "Locked";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -608,7 +659,7 @@ function BadgeModal({
           </button>
         </div>
         <div className="flex flex-wrap items-start gap-[26px]">
-          <ReportBadgePlate badge={badge} period={report.period} size="lg" />
+          <ReportBadgePlate badge={badge} size="lg" />
           <div className="min-w-[220px] flex-1">
             <div className="mb-1.5 text-[17px] font-semibold leading-snug">
               {badge.name}
@@ -626,15 +677,18 @@ function BadgeModal({
             <div className="mt-4 flex flex-col">
               {[
                 {
-                  label: badge.cat ? `${categoryLabel(badge.cat)} score` : "Overall score",
+                  label: `${categoryLabel(badge.cat)} score`,
+                  value: badge.value == null ? "Not measured" : String(badge.value),
+                },
+                {
+                  label: "Tests passed",
                   value:
-                    badge.locked || badge.value == null
-                      ? "Not measured"
-                      : String(badge.value),
+                    badge.testCount === 0
+                      ? "None in this run"
+                      : `${badge.passedCount} / ${badge.testCount}`,
                 },
                 { label: "Criteria", value: badge.crit },
                 { label: "Issued", value: badge.met ? report.issued : "—" },
-                { label: "Valid through", value: badge.met ? report.expires : "—" },
                 { label: "From run", value: report.name },
               ].map((row) => (
                 <div
@@ -672,9 +726,11 @@ function BadgeModal({
           >
             Close
           </Button>
-          <Button type="button" size="sm" className="rounded-full" onClick={onCta}>
-            {ctaLabel}
-          </Button>
+          {badge.met && (
+            <Button type="button" size="sm" className="rounded-full" onClick={onCta}>
+              Download badge
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

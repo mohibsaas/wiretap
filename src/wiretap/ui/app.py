@@ -69,6 +69,15 @@ class FromNumberBody(BaseModel):
     from_number: str
 
 
+class PromptFindingsBody(BaseModel):
+    finding_ids: list[str] = Field(default_factory=list)
+
+
+class PromptApplyBody(BaseModel):
+    finding_ids: list[str] = Field(default_factory=list)
+    current_hash: str
+
+
 class ConnectBody(BaseModel):
     platform: str
     agent_id: str | None = None
@@ -382,7 +391,7 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
             raise HTTPException(404, str(exc)) from exc
 
     @app.post("/api/batches")
-    async def api_start_batch(body: StartBatchBody) -> dict[str, Any]:
+    async def api_start_batch(body: StartBatchBody) -> dict[str, str]:
         try:
             batch = start_batch(
                 suite=body.suite,
@@ -400,17 +409,7 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
             )
         except (KeyError, ValueError, FileNotFoundError) as exc:
             raise HTTPException(400, str(exc)) from exc
-        # Include planned cases so the Simulations list can render immediately
-        # (before disk progress / finished artifacts exist).
-        from wiretap.suite.run_progress import progress_public, read_run_progress
-
-        progress = read_run_progress(batch.batch_id, cwd)
-        return {
-            "batch_id": batch.batch_id,
-            "suite_id": batch.suite,
-            "scenario_ids": list(batch.scenario_ids),
-            "progress": progress_public(progress) if progress else None,
-        }
+        return {"batch_id": batch.batch_id}
 
     @app.get("/api/batches/{batch_id}")
     def api_get_batch(batch_id: str) -> dict[str, Any]:
@@ -450,45 +449,83 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
         """Parent evaluation runs (one suite execution each)."""
         return list_evaluation_runs(cwd, limit=limit)
 
-    # Separate prefix — avoids /api/evaluations/{batch_id} swallowing "progress".
-    @app.get("/api/progress")
-    def api_list_run_progress() -> list[dict[str, Any]]:
-        """Active (CLI or UI) evaluation progress sidecars."""
-        from wiretap.suite.run_progress import list_run_progress, progress_public
-
-        return [progress_public(p) for p in list_run_progress(cwd, active_only=True)]
-
-    @app.get("/api/progress/{batch_id}")
-    def api_get_run_progress(batch_id: str) -> dict[str, Any]:
-        from wiretap.suite.run_progress import progress_public, read_run_progress
-
-        progress = read_run_progress(batch_id, cwd)
-        if not progress:
-            raise HTTPException(404, "no live progress for this evaluation")
-        return progress_public(progress)
-
-    # Legacy alias — must stay above /api/evaluations/{batch_id}.
-    @app.get("/api/evaluations/progress")
-    def api_list_evaluation_progress_legacy() -> list[dict[str, Any]]:
-        from wiretap.suite.run_progress import list_run_progress, progress_public
-
-        return [progress_public(p) for p in list_run_progress(cwd, active_only=True)]
-
-    @app.get("/api/evaluations/{batch_id}/progress")
-    def api_get_evaluation_progress_legacy(batch_id: str) -> dict[str, Any]:
-        from wiretap.suite.run_progress import progress_public, read_run_progress
-
-        progress = read_run_progress(batch_id, cwd)
-        if not progress:
-            raise HTTPException(404, "no live progress for this evaluation")
-        return progress_public(progress)
-
     @app.get("/api/evaluations/{batch_id}")
     def api_get_evaluation(batch_id: str) -> dict[str, Any]:
+        live = get_batch(batch_id)
         detail = evaluation_run_detail(batch_id, cwd)
-        if not detail:
+        if not detail and live is None:
             raise HTTPException(404, "evaluation not found")
+        if not detail:
+            detail = {
+                "batch_id": live.batch_id,
+                "suite_id": live.suite,
+                "status": live.status,
+                "scenario_ids": live.scenario_ids,
+                "simulations": [a.model_dump(mode="json") for a in live.results],
+            }
+        if live is not None and live.advice is not None:
+            detail["advice"] = live.advice.model_dump(mode="json")
         return detail
+
+    @app.post("/api/evaluations/{batch_id}/prompt-preview")
+    async def api_prompt_preview(
+        batch_id: str, body: PromptFindingsBody
+    ) -> dict[str, Any]:
+        return await _prompt_action(batch_id, body.finding_ids)
+
+    @app.post("/api/evaluations/{batch_id}/prompt-apply")
+    async def api_prompt_apply(batch_id: str, body: PromptApplyBody) -> dict[str, Any]:
+        return await _prompt_action(
+            batch_id, body.finding_ids, current_hash=body.current_hash, write=True
+        )
+
+    async def _prompt_action(
+        batch_id: str,
+        finding_ids: list[str],
+        *,
+        current_hash: str = "",
+        write: bool = False,
+    ) -> dict[str, Any]:
+        from wiretap.paths import suite_path
+        from wiretap.services.prompt_apply import (
+            PromptApplyError,
+            advice_from_run,
+            apply_prompt,
+            preview_prompt,
+        )
+        from wiretap.suite import load_suite
+
+        live = get_batch(batch_id)
+        detail = evaluation_run_detail(batch_id, cwd) or {}
+        if live is not None and live.advice is not None:
+            advice = live.advice
+            suite_id = live.suite
+        else:
+            advice = advice_from_run(detail)
+            suite_id = str(detail.get("suite_id") or "")
+        if advice is None:
+            raise HTTPException(404, "no improvements for this run")
+        if not suite_id:
+            raise HTTPException(400, "evaluation has no suite")
+        try:
+            cfg = load_suite(suite_path(suite_id, cwd))
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        try:
+            if write:
+                return await apply_prompt(
+                    cfg,
+                    advice,
+                    finding_ids,
+                    current_hash=current_hash,
+                    cwd=cwd,
+                    suite_id=suite_id,
+                )
+            return await preview_prompt(cfg, advice, finding_ids)
+        except PromptApplyError as exc:
+            raise HTTPException(
+                exc.status, {"detail": str(exc), "code": exc.code}
+            ) from exc
 
     @app.get("/api/simulations")
     def api_list_simulations(limit: int = 50) -> list[dict[str, Any]]:

@@ -528,26 +528,32 @@ export function OnboardPage({
     <div
       className={cn(
         "mx-auto flex w-full flex-col",
-        compact ? "max-w-none gap-5 pb-1" : "max-w-[960px] gap-7 pb-8",
+        compact ? "max-w-none gap-5 pb-2" : "max-w-[960px] gap-7 pb-8",
       )}
     >
-      {compact ? (
+      <header
+        className={cn(
+          "flex flex-col gap-4 border-b border-border",
+          compact ? "pb-4" : "pb-5",
+        )}
+      >
+        <div>
+          <h1
+            className={cn(
+              "font-semibold tracking-[-0.005em] text-foreground",
+              compact ? "text-[18px]" : "text-[22px]",
+            )}
+          >
+            Welcome
+          </h1>
+          <p className="mt-1 max-w-xl text-[13.5px] leading-relaxed text-muted-foreground text-pretty">
+            {addAgentMode
+              ? "Connect another live agent. Existing simulator keys are reused."
+              : "Same path as wiretap init — simulator, live agent, suite, then optional phone. Keys stay in the local secret store."}
+          </p>
+        </div>
         <StepRail steps={railSteps} current={step} />
-      ) : (
-        <header className="flex flex-col gap-4 border-b border-border pb-5">
-          <div>
-            <h1 className="text-[22px] font-semibold tracking-[-0.005em] text-foreground">
-              Welcome
-            </h1>
-            <p className="mt-1 max-w-xl text-[13.5px] leading-relaxed text-muted-foreground text-pretty">
-              {addAgentMode
-                ? "Connect another live agent. Existing simulator keys are reused."
-                : "Same path as wiretap init — simulator, live agent, suite, then optional phone. Keys stay in the local secret store."}
-            </p>
-          </div>
-          <StepRail steps={railSteps} current={step} />
-        </header>
-      )}
+      </header>
 
       {error && <p className="text-sm text-fail">{error}</p>}
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, ChevronRight, Search, SlidersHorizontal, Square } from "lucide-react";
+import { ChevronDown, ChevronRight, ListFilter, Search, Square } from "lucide-react";
 import {
   CategorySpark,
   ReportBadgeChip,
@@ -194,7 +194,7 @@ export function ReportsPage() {
             ]}
           />
           <FilterDropdown
-            icon={<SlidersHorizontal className="size-3.5" />}
+            icon={<ListFilter className="size-3.5" />}
             label="Coverage"
             value={coverageFilter}
             onChange={(v) => setCoverageFilter(v as CoverageFilter)}
@@ -274,7 +274,7 @@ function ReportCard({ report }: { report: ReportView }) {
         </div>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1.5">
-        <ReportBadgeChip full={report.full} earned={earned} />
+        <ReportBadgeChip earned={earned} />
         <span className="font-mono text-[11.5px] text-[var(--wt-text-muted)]">
           {formatRelative(report.createdAt)}
         </span>

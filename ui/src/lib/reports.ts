@@ -26,50 +26,41 @@ export type ReportCategoryId = (typeof REPORT_CATEGORIES)[number]["id"];
 
 export type ReportStatus = "Clean" | "Flagged";
 
+export const BADGE_NAMES: Record<ReportCategoryId, string> = {
+  emotional: "Calm Under Fire",
+  linguistic: "Clear Listener",
+  adversarial: "Unbreakable",
+  operational: "Interruption Handler",
+  factual: "Hallucination Free",
+  compliance: "Regulation Ready",
+  task: "Task Keeper",
+};
+
 export type BadgeDef = {
-  id: string;
+  id: ReportCategoryId;
   name: string;
-  cat: ReportCategoryId | null;
-  min: number;
+  cat: ReportCategoryId;
   crit: string;
 };
 
-export const BADGE_DEFS: BadgeDef[] = [
-  {
-    id: "b1",
-    name: "Voice Agent Verified",
-    cat: null,
-    min: 70,
-    crit: "Overall 70 or higher, all 7 categories",
-  },
-  {
-    id: "b2",
-    name: "High Performer",
-    cat: null,
-    min: 85,
-    crit: "Overall 85 or higher, all 7 categories",
-  },
-  {
-    id: "b3",
-    name: "Compliance Ready",
-    cat: "compliance",
-    min: 90,
-    crit: "Compliance 90 or higher, all 7 categories",
-  },
-  {
-    id: "b4",
-    name: "Adversarial Resilient",
-    cat: "adversarial",
-    min: 85,
-    crit: "Adversarial 85 or higher, all 7 categories",
-  },
-];
+export const BADGE_DEFS: BadgeDef[] = REPORT_CATEGORIES.map((c) => ({
+  id: c.id,
+  name: BADGE_NAMES[c.id],
+  cat: c.id,
+  crit: `Pass every ${c.label} simulation in this run.`,
+}));
 
 export type ReportBadge = BadgeDef & {
   value: number | null;
   locked: boolean;
   met: boolean;
+  passedCount: number;
+  testCount: number;
 };
+
+export function badgeImageSrc(badge: Pick<ReportBadge, "met" | "cat">): string {
+  return badge.met ? `/badges/${badge.cat}.png` : "/badges/locked.png";
+}
 
 export type ScenarioMeta = {
   category?: string | null;
@@ -302,12 +293,16 @@ export function buildReport(opts: {
   const flaggedCount = rows.filter((r) => r.flagged).length;
 
   const badges: ReportBadge[] = BADGE_DEFS.map((b) => {
-    const value = b.cat ? scores[b.cat] : overall;
+    const tests = rows.filter((r) => r.categoryId === b.cat);
+    const passed = tests.filter((r) => !r.flagged).length;
+    const met = tests.length > 0 && passed === tests.length;
     return {
       ...b,
-      value,
-      locked: !full,
-      met: full && value != null && value >= b.min,
+      value: scores[b.cat],
+      locked: !met,
+      met,
+      passedCount: passed,
+      testCount: tests.length,
     };
   });
 
@@ -367,44 +362,63 @@ export function downloadText(filename: string, body: string, type: string): void
   URL.revokeObjectURL(url);
 }
 
-/** Client-side SVG pack of earned badges — no secrets, display scores only. */
-export function badgePackSvg(report: ReportView): string {
-  const earned = report.badges.filter((b) => b.met);
-  const cards = earned.length ? earned : report.badges;
-  const w = 220;
-  const h = 260;
-  const gap = 16;
-  const width = cards.length * w + (cards.length - 1) * gap + 40;
-  const height = h + 40;
-  const plates = cards
-    .map((b, i) => {
-      const x = 20 + i * (w + gap);
-      const on = b.met;
-      const fill = on ? "#0A9551" : "#E4E3DF";
-      const name = escapeXml(b.name);
-      const value = b.locked || b.value == null ? "—" : String(b.value);
-      return `<g transform="translate(${x},20)">
-  <rect width="${w}" height="${h}" rx="16" fill="${on ? "#FFFFFF" : "#F9F8F6"}" stroke="${on ? "#0A9551" : "#D8D6D1"}"/>
-  <rect width="${w}" height="36" rx="16" fill="${fill}"/>
-  <rect y="20" width="${w}" height="16" fill="${fill}"/>
-  <text x="${w / 2}" y="24" text-anchor="middle" fill="${on ? "#FFFFFF" : "#8A8984"}" font-family="system-ui,sans-serif" font-size="11" font-weight="600" letter-spacing="2">WIRETAP</text>
-  <text x="${w / 2}" y="110" text-anchor="middle" fill="${on ? "#0A9551" : "#8A8984"}" font-family="system-ui,sans-serif" font-size="16" font-weight="600">${name}</text>
-  <text x="${w / 2}" y="160" text-anchor="middle" fill="#292927" font-family="ui-monospace,monospace" font-size="36" font-weight="600">${value}</text>
-  <text x="${w / 2}" y="190" text-anchor="middle" fill="#8A8984" font-family="system-ui,sans-serif" font-size="11" font-weight="600" letter-spacing="1.5">${escapeXml(report.period.toUpperCase())}</text>
-</g>`;
-    })
-    .join("\n");
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-  ${plates}
-</svg>
-`;
+export async function downloadBadgePng(badge: ReportBadge): Promise<void> {
+  if (!badge.met) return;
+  const blob = await fetch(badgeImageSrc(badge)).then((r) => {
+    if (!r.ok) throw new Error("Could not load the badge image.");
+    return r.blob();
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `wiretap-badge-${badge.cat}.png`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+/** Compose earned category shields into one PNG — display art only, no secrets. */
+export async function downloadBadgePack(report: ReportView): Promise<void> {
+  const earned = report.badges.filter((b) => b.met);
+  if (earned.length === 0) return;
+  if (earned.length === 1) {
+    await downloadBadgePng(earned[0]);
+    return;
+  }
+  const size = 360;
+  const gap = 16;
+  const images = await Promise.all(
+    earned.map((b) => loadImage(badgeImageSrc(b))),
+  );
+  const canvas = document.createElement("canvas");
+  canvas.width = earned.length * size + (earned.length - 1) * gap;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not compose the badge pack.");
+  images.forEach((img, i) => {
+    ctx.drawImage(img, i * (size + gap), 0, size, size);
+  });
+  await new Promise<void>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("Could not compose the badge pack."));
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `wiretap-badges-${report.hash}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+      resolve();
+    }, "image/png");
+  });
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Could not load a badge image."));
+    img.src = src;
+  });
 }

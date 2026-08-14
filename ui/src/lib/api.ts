@@ -124,7 +124,30 @@ export type AdviceFinding = {
   confidence?: "high" | "medium" | "low" | string;
 };
 
-/** Run-level agent-improvement advice, generated once per evaluation run. */
+export type PromptDiffHunk = {
+  op: "equal" | "insert" | "delete" | string;
+  text: string;
+};
+
+export type SkippedAddition = {
+  id?: string;
+  text: string;
+  reason?: string;
+};
+
+export type PromptPreview = {
+  platform: string;
+  agent_id: string;
+  current: string;
+  additions?: string[];
+  skipped?: SkippedAddition[];
+  diff?: PromptDiffHunk[];
+  draft: string;
+  current_hash: string;
+  applied_finding_ids: string[];
+  writable: boolean;
+  unchanged?: boolean;
+};
 export type RunAdvice = {
   summary?: string;
   findings: AdviceFinding[];
@@ -161,30 +184,6 @@ export type Batch = {
   results: Simulation[];
   error?: string | null;
   advice?: RunAdvice | null;
-};
-
-export type ScenarioProgress = {
-  scenario_id: string;
-  scenario_name?: string;
-  phase: string;
-  detail?: string;
-  turn?: number;
-  simulation_id?: string | null;
-  passed?: boolean | null;
-  inconclusive?: boolean | null;
-  error?: string | null;
-};
-
-export type RunProgress = {
-  batch_id: string;
-  suite_id?: string;
-  status: string;
-  created_at?: string;
-  updated_at?: string;
-  concurrency?: number;
-  total?: number;
-  done?: number;
-  scenarios: ScenarioProgress[];
 };
 
 export type Category = {
@@ -295,6 +294,19 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text();
+    try {
+      const parsed = JSON.parse(text) as {
+        detail?: string | { message?: string; detail?: string; code?: string };
+      };
+      const d = parsed.detail;
+      if (typeof d === "string" && d.trim()) throw new Error(d);
+      if (d && typeof d === "object") {
+        const msg = d.message || d.detail;
+        if (msg) throw new Error(msg);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message !== text) throw err;
+    }
     throw new Error(text || res.statusText);
   }
   return res.json() as Promise<T>;
@@ -461,9 +473,25 @@ export const client = {
     api<EvaluationRun[]>(`/api/evaluations?limit=${limit}`),
   evaluation: (batchId: string) =>
     api<EvaluationRun>(`/api/evaluations/${batchId}`),
-  evaluationProgress: (batchId: string) =>
-    api<RunProgress>(`/api/progress/${encodeURIComponent(batchId)}`),
-  activeEvaluationProgress: () => api<RunProgress[]>(`/api/progress`),
+  previewPrompt: (batchId: string, findingIds: string[]) =>
+    api<PromptPreview>(
+      `/api/evaluations/${encodeURIComponent(batchId)}/prompt-preview`,
+      {
+        method: "POST",
+        body: JSON.stringify({ finding_ids: findingIds }),
+      },
+    ),
+  applyPrompt: (batchId: string, findingIds: string[], currentHash: string) =>
+    api<{ ok: boolean; platform: string; agent_id: string }>(
+      `/api/evaluations/${encodeURIComponent(batchId)}/prompt-apply`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          finding_ids: findingIds,
+          current_hash: currentHash,
+        }),
+      },
+    ),
   simulations: (limit = 40) =>
     api<Simulation[]>(`/api/simulations?limit=${limit}`),
   simulation: (id: string) => api<Simulation>(`/api/simulations/${id}`),
@@ -480,12 +508,7 @@ export const client = {
     transport?: string | null;
     phone?: string | null;
   }) =>
-    api<{
-      batch_id: string;
-      suite_id?: string;
-      scenario_ids?: string[];
-      progress?: RunProgress | null;
-    }>("/api/batches", {
+    api<{ batch_id: string }>("/api/batches", {
       method: "POST",
       body: JSON.stringify(body),
     }),

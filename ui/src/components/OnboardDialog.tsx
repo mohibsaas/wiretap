@@ -2,16 +2,9 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  modalContentClass,
-  modalDescriptionClass,
-  modalTitleClass,
-} from "@/components/AppModal";
 import { OnboardPage } from "@/pages/OnboardPage";
-import { cn } from "@/lib/utils";
 
 type Props = {
   open: boolean;
@@ -42,10 +35,7 @@ export function OnboardDialog({
       <DialogContent
         showCloseButton={!required}
         overlayClassName="bg-black/35 supports-backdrop-filter:backdrop-blur-md"
-        className={cn(
-          modalContentClass,
-          "flex max-h-[min(920px,92dvh)] w-full flex-col sm:max-w-[720px]",
-        )}
+        className="flex max-h-[min(920px,92dvh)] w-full flex-col gap-0 overflow-hidden rounded-[18px] border-border bg-card p-0 text-sm shadow-[0_30px_80px_-20px_rgba(41,41,39,0.28)] sm:max-w-[720px]"
         onPointerDownOutside={(e) => {
           if (required) e.preventDefault();
         }}
@@ -56,25 +46,35 @@ export function OnboardDialog({
           if (required) e.preventDefault();
         }}
       >
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-6 pb-5">
-          <DialogHeader className="shrink-0 gap-1.5">
-            <DialogTitle className={modalTitleClass}>Welcome</DialogTitle>
-            <DialogDescription className={modalDescriptionClass}>
-              {addAgentMode
-                ? "Connect another live agent. Existing simulator keys are reused."
-                : "Same path as wiretap init — simulator, live agent, suite, then optional phone. Keys stay in the local secret store."}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <OnboardPage
-              addAgentMode={addAgentMode}
-              compact
-              onFinished={(result) => {
-                onOpenChange(false);
-                onFinished?.(result);
-              }}
+        <div className="flex shrink-0 items-center gap-3 border-b border-border px-6 py-4">
+          <div className="min-w-0">
+            <DialogTitle className="sr-only">Wiretap</DialogTitle>
+            <img
+              src="/wiretap-wordmark.png"
+              alt=""
+              className="h-8 w-auto max-w-full select-none"
+              draggable={false}
             />
+            {!addAgentMode ? (
+              <DialogDescription className="mt-1 text-xs text-muted-foreground">
+                First-time setup
+              </DialogDescription>
+            ) : (
+              <DialogDescription className="sr-only">
+                Setup
+              </DialogDescription>
+            )}
           </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          <OnboardPage
+            addAgentMode={addAgentMode}
+            compact
+            onFinished={(result) => {
+              onOpenChange(false);
+              onFinished?.(result);
+            }}
+          />
         </div>
       </DialogContent>
     </Dialog>

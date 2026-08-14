@@ -59,7 +59,7 @@ Optional extras: `pstn` (real phone calls), `mcp` (MCP server), `dev` (pytest / 
 
 ```bash
 uv sync --extra pstn   # Twilio + SIP softphone, needed for `--transport phone`
-uv sync --extra mcp    # then: uv run wiretap-mcp   (or wiretap-mcp after tool install)
+uv sync --extra mcp    # MCP server for coding agents — see "MCP server" below
 uv sync --extra dev
 ```
 
@@ -208,6 +208,44 @@ uv run wiretap ui run
 ```
 
 First-run onboarding: **Your Agent** → **Test Agent** (LLM + STT/TTS) → **What To Test**. Same `~/.wiretap/` data as the CLI. Secrets stay in `~/.wiretap/.env`; the API only reports whether keys are set.
+
+---
+
+## MCP server
+
+Exposes wiretap to coding agents (Cursor, Claude Code, …) over stdio. Same
+`~/.wiretap/` data as the CLI and UI.
+
+```bash
+uv sync --extra mcp
+uv run wiretap-mcp
+```
+
+Register it with your client — for Cursor, `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "wiretap": { "command": "uv", "args": ["run", "wiretap-mcp"] }
+  }
+}
+```
+
+| Tool | What it does |
+| --- | --- |
+| `list_suites` / `get_suite` | Local suites with counts; one suite as JSON |
+| `export_suite` | Suite as YAML text |
+| `simulate_suite` | Dial the live agent (whole suite or one `scenario`), concurrent |
+| `list_simulations` / `get_simulation` | Result summaries; full transcript by id |
+| `list_evaluations` / `get_evaluation` | Runs (batches) with pass/fail counts |
+| `import_agent` | vapi, retell, bland, bolna, elevenlabs, synthflow |
+| `import_livekit_agent` | LiveKit room + agent worker |
+| `generate_suite` / `fill_suite_scenarios` | LLM-generate scenarios |
+| `list_categories` | Categories available to generation |
+
+Simulation tools return summaries rather than transcripts — fetch a transcript
+with `get_simulation` when you need one. Suite names are validated, so a tool
+call cannot read or write outside `~/.wiretap/`.
 
 ---
 
