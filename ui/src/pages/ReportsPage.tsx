@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, ChevronRight, Search, SlidersHorizontal, Square } from "lucide-react";
+import { ChevronDown, ChevronRight, ListFilter, Search, Square } from "lucide-react";
 import {
   CategorySpark,
   ReportBadgeChip,
@@ -227,7 +227,7 @@ export function ReportsPage() {
             ]}
           />
           <FilterDropdown
-            icon={<SlidersHorizontal className="size-3.5" />}
+            icon={<ListFilter className="size-3.5" />}
             label="Coverage"
             value={coverageFilter}
             onChange={(v) => setCoverageFilter(v as CoverageFilter)}

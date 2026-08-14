@@ -322,7 +322,7 @@ def _findings(raw: object, *, has_config: bool) -> list[AdviceFinding]:
         ]
         out.append(
             AdviceFinding(
-                id=str(item.get("id") or "").strip()[:80],
+                id=str(item.get("id") or "").strip()[:80] or f"finding-{len(out) + 1}",
                 target=_one_of(item.get("target"), TARGETS, "agent_prompt"),
                 severity=_one_of(item.get("severity"), _SEVERITY, "medium"),
                 title=title,
