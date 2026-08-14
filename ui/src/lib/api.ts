@@ -1,5 +1,6 @@
 export type SuiteSummary = {
   name: string;
+  title?: string;
   path: string;
   scenario_count?: number;
   persona_count?: number;
@@ -10,6 +11,7 @@ export type SuiteSummary = {
 
 export type SuiteDetail = {
   name: string;
+  title?: string;
   agent: {
     transport: string;
     platform?: string | null;
@@ -166,6 +168,12 @@ export type Category = {
   label: string;
   description: string;
   max_tests: number;
+  examples?: {
+    name: string;
+    identity: string;
+    goal: string;
+    say: string;
+  }[];
 };
 
 export type VoiceOption = {
@@ -271,6 +279,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export const client = {
   health: () => api<{ version: string }>("/api/health"),
   onboardStatus: () => api<OnboardStatus>("/api/onboard/status"),
+  categories: () => api<Category[]>("/api/categories"),
   providers: () => api<ProviderCatalog>("/api/providers"),
   llmModels: (provider: string, apiKey?: string | null) =>
     api<{
@@ -384,11 +393,19 @@ export const client = {
   agents: () => api<AgentRow[]>("/api/agents"),
   suites: () => api<SuiteSummary[]>("/api/suites"),
   suite: (name: string) => api<SuiteDetail>(`/api/suites/${encodeURIComponent(name)}`),
-  updateSuite: (name: string, cases: SuiteCaseUpdate[]) =>
+  updateSuite: (
+    name: string,
+    body: { cases?: SuiteCaseUpdate[]; title?: string },
+  ) =>
     api<SuiteDetail>(`/api/suites/${encodeURIComponent(name)}`, {
       method: "PUT",
-      body: JSON.stringify({ cases }),
+      body: JSON.stringify(body),
     }),
+  deleteSuite: (name: string) =>
+    api<{ name: string; removed: string[] }>(
+      `/api/suites/${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    ),
   evaluations: (limit = 40) =>
     api<EvaluationRun[]>(`/api/evaluations?limit=${limit}`),
   evaluation: (batchId: string) =>

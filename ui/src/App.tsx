@@ -10,6 +10,7 @@ import { RequireOnboarded } from "@/components/RequireOnboarded";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AgentsPage } from "@/pages/AgentsPage";
 import { BatchPage } from "@/pages/BatchPage";
+import { CategoriesPage } from "@/pages/CategoriesPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { EvaluationsPage } from "@/pages/EvaluationsPage";
 import { HomeRedirect } from "@/pages/HomeRedirect";
@@ -45,6 +46,7 @@ export default function App() {
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="agents" element={<AgentsPage />} />
               <Route path="suites" element={<SuitesPage />} />
+              <Route path="categories" element={<CategoriesPage />} />
               <Route path="suites/:name/edit" element={<RedirectSuiteEdit />} />
               <Route path="suites/:name" element={<SuiteDetailPage />} />
               <Route path="evaluations" element={<EvaluationsPage />} />

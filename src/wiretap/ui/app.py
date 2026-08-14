@@ -27,6 +27,7 @@ from wiretap.services.secrets import key_status, load_dotenv, upsert_secrets
 from wiretap.services.simulations import get_simulation_detail, list_simulations
 from wiretap.services.suites import (
     UpdateSuiteBody,
+    delete_suite,
     get_suite,
     list_suites,
     suite_public_dict,
@@ -323,7 +324,7 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
 
     @app.put("/api/suites/{name}")
     def api_update_suite(name: str, body: UpdateSuiteBody) -> dict[str, Any]:
-        """Update editable test-case rows (persona + scenario fields) in suite YAML."""
+        """Update suite title and/or editable test-case rows in suite YAML."""
         try:
             stem = validate_suite_name(name)
             suite = update_suite_cases(stem, body, cwd)
@@ -334,6 +335,16 @@ def create_app(*, cwd: Path | None = None) -> FastAPI:
         except ValidationError as exc:
             raise HTTPException(400, str(exc)) from exc
         return suite_public_dict(suite, name=stem)
+
+    @app.delete("/api/suites/{name}")
+    def api_delete_suite(name: str) -> dict[str, Any]:
+        """Delete a suite YAML and its companion agent graph, if any."""
+        try:
+            return delete_suite(name, cwd)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @app.post("/api/batches")
     async def api_start_batch(body: StartBatchBody) -> dict[str, str]:

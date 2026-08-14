@@ -8,6 +8,7 @@ import {
   LayoutGrid,
   Play,
   Settings,
+  Shapes,
   SquareCheckBig,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -35,6 +36,7 @@ const monitor: NavItem[] = [
 
 const evaluate: NavItem[] = [
   { to: "/suites", label: "Test Suites", icon: SquareCheckBig },
+  { to: "/categories", label: "Test Categories", icon: Shapes },
   { to: "/evaluations", label: "Simulations", icon: Play },
   { to: "/agents", label: "Agents", icon: Bot },
 ];

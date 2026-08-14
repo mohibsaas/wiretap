@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { ArrowUpRight, Plus } from "lucide-react";
+import { Trash2, Plus } from "lucide-react";
+import { ConnectAgentDialog } from "@/components/ConnectAgentDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { TruncatedText } from "@/components/TruncatedText";
 import { Button } from "@/components/ui/button";
@@ -26,23 +26,15 @@ function agentDisplayName(a: AgentRow): string {
   return a.name || a.agent_id || a.id || a.suite || "Untitled agent";
 }
 
-function agentIdLabel(a: AgentRow): string {
-  const id = a.agent_id || a.id;
-  if (!id) return "—";
-  if (a.platform) return `${a.platform}/${id}`;
-  return id;
-}
-
 function agentSubtitle(a: AgentRow): string {
   const parts: string[] = [];
-  if (a.suite) parts.push(a.suite);
   if (typeof a.scenario_count === "number") {
     parts.push(
       `${a.scenario_count} scenario${a.scenario_count === 1 ? "" : "s"}`,
     );
   }
   if (a.transport) parts.push(a.transport);
-  return parts.join(" · ") || "Local suite agent";
+  return parts.join(" · ") || "Local agent";
 }
 
 function agentStatus(a: AgentRow): {
@@ -58,18 +50,50 @@ function agentStatus(a: AgentRow): {
 export function AgentsPage() {
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
-  useEffect(() => {
+  function reload() {
     client
       .agents()
       .then(setAgents)
       .catch((e: Error) => setError(e.message));
+  }
+
+  useEffect(() => {
+    reload();
   }, []);
 
   const meta = useMemo(() => {
     const n = agents.length;
     return `${n} agent${n === 1 ? "" : "s"}`;
   }, [agents.length]);
+
+  async function removeAgent(a: AgentRow) {
+    const suite = a.suite?.trim();
+    if (!suite) {
+      setError("This agent has no local suite to delete.");
+      return;
+    }
+    const label = agentDisplayName(a);
+    if (
+      !window.confirm(
+        `Delete “${label}” and its suite (${suite})? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setDeleting(suite);
+    setError(null);
+    try {
+      await client.deleteSuite(suite);
+      reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleting(null);
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -78,11 +102,9 @@ export function AgentsPage() {
         meta={meta}
         subtitle="The voice agents whose lines you tap."
         action={
-          <Button asChild className="rounded-full">
-            <Link to="/onboard?again=1">
-              <Plus data-icon="inline-start" />
-              Add agent
-            </Link>
+          <Button className="rounded-full" onClick={() => setConnectOpen(true)}>
+            <Plus data-icon="inline-start" />
+            Add agent
           </Button>
         }
       />
@@ -90,131 +112,106 @@ export function AgentsPage() {
       {error && <p className="text-sm text-fail">{error}</p>}
 
       <div className="overflow-x-auto rounded-[14px] border border-border bg-card">
-        <div className="min-w-[720px]">
-        <div
-          className="grid gap-0 border-b border-border bg-[var(--wt-section)] px-5 py-2.5 text-[10.5px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase"
-          style={{
-            gridTemplateColumns:
-              "minmax(180px,1.4fr) minmax(140px,1.2fr) 120px 110px minmax(120px,1fr) 56px",
-          }}
-        >
-          <div>Agent</div>
-          <div>ID</div>
-          <div>Provider</div>
-          <div>Status</div>
-          <div>Suite</div>
-          <div className="text-right">Actions</div>
-        </div>
-
-        {agents.length === 0 && !error ? (
-          <div className="px-5 py-10 text-sm text-muted-foreground text-pretty">
-            No agents yet. Use{" "}
-            <Link
-              to="/onboard?again=1"
-              className="font-medium text-foreground underline-offset-2 hover:underline"
-            >
-              Add agent
-            </Link>{" "}
-            or import from the CLI, then generate a suite.
+        <div className="min-w-[560px]">
+          <div
+            className="grid gap-0 border-b border-border bg-[var(--wt-section)] px-5 py-2.5 text-[10.5px] font-semibold tracking-[0.06em] text-[var(--wt-text-muted)] uppercase"
+            style={{
+              gridTemplateColumns: "minmax(200px,1.6fr) 140px 120px 56px",
+            }}
+          >
+            <div>Agent</div>
+            <div>Provider</div>
+            <div>Status</div>
+            <div className="text-right"> </div>
           </div>
-        ) : (
-          agents.map((a, i) => {
-            const status = agentStatus(a);
-            const name = agentDisplayName(a);
-            const id = agentIdLabel(a);
-            return (
-              <div
-                key={`${a.id}-${a.suite}-${i}`}
-                className="grid items-center gap-0 border-b border-border px-5 py-3.5 last:border-b-0 transition-colors hover:bg-[var(--wt-section)]"
-                style={{
-                  gridTemplateColumns:
-                    "minmax(180px,1.4fr) minmax(140px,1.2fr) 120px 110px minmax(120px,1fr) 56px",
-                }}
+
+          {agents.length === 0 && !error ? (
+            <div className="px-5 py-10 text-sm text-muted-foreground text-pretty">
+              No agents yet.{" "}
+              <button
+                type="button"
+                className="font-medium text-foreground underline-offset-2 hover:underline"
+                onClick={() => setConnectOpen(true)}
               >
-                <div className="min-w-0 pr-3">
-                  <TruncatedText
-                    text={name}
-                    className="text-[13.5px] font-semibold leading-snug text-foreground"
-                  />
-                  <TruncatedText
-                    text={agentSubtitle(a)}
-                    className="mt-0.5 text-xs leading-snug text-[var(--wt-text-muted)]"
-                  />
-                </div>
+                Add agent
+              </button>{" "}
+              or import from the CLI, then generate a suite.
+            </div>
+          ) : (
+            agents.map((a, i) => {
+              const status = agentStatus(a);
+              const name = agentDisplayName(a);
+              const canDelete = Boolean(a.suite);
+              return (
+                <div
+                  key={`${a.id}-${a.suite}-${i}`}
+                  className="grid items-center gap-0 border-b border-border px-5 py-3.5 last:border-b-0 transition-colors hover:bg-[var(--wt-section)]"
+                  style={{
+                    gridTemplateColumns: "minmax(200px,1.6fr) 140px 120px 56px",
+                  }}
+                >
+                  <div className="min-w-0 pr-3">
+                    <TruncatedText
+                      text={name}
+                      className="text-[13.5px] font-semibold leading-snug text-foreground"
+                    />
+                    <TruncatedText
+                      text={agentSubtitle(a)}
+                      className="mt-0.5 text-xs leading-snug text-[var(--wt-text-muted)]"
+                    />
+                  </div>
 
-                <div className="min-w-0 pr-3">
-                  <TruncatedText
-                    text={id}
-                    className="font-mono text-[12.5px] text-muted-foreground"
-                  />
-                </div>
+                  <div className="min-w-0 pr-3 text-[13px] text-muted-foreground">
+                    <TruncatedText text={providerLabel(a.platform)} />
+                  </div>
 
-                <div className="min-w-0 pr-3 text-[13px] text-muted-foreground">
-                  <TruncatedText text={providerLabel(a.platform)} />
-                </div>
-
-                <div className="pr-3">
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] font-semibold",
-                      status.tone === "pass" &&
-                        "border-[var(--wt-green-600)] bg-[var(--wt-green-100)] text-[var(--wt-green-700)]",
-                      status.tone === "warn" &&
-                        "border-border bg-[var(--wt-section)] text-foreground",
-                      status.tone === "muted" &&
-                        "border-border bg-muted text-muted-foreground",
-                    )}
-                  >
+                  <div className="pr-3">
                     <span
                       className={cn(
-                        "size-[7px] rounded-full",
-                        status.tone === "pass" && "bg-pass",
-                        status.tone === "warn" && "bg-warn",
-                        status.tone === "muted" && "bg-muted-foreground",
+                        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] font-semibold",
+                        status.tone === "pass" &&
+                          "border-[var(--wt-green-600)] bg-[var(--wt-green-100)] text-[var(--wt-green-700)]",
+                        status.tone === "warn" &&
+                          "border-border bg-[var(--wt-section)] text-foreground",
+                        status.tone === "muted" &&
+                          "border-border bg-muted text-muted-foreground",
                       )}
-                    />
-                    {status.label}
-                  </span>
-                </div>
-
-                <div className="min-w-0 pr-3">
-                  {a.suite ? (
-                    <Link
-                      to={`/suites/${encodeURIComponent(a.suite)}`}
-                      className="block min-w-0"
                     >
-                      <TruncatedText
-                        text={a.suite}
-                        className="font-mono text-[12.5px] text-foreground underline-offset-2 hover:underline"
+                      <span
+                        className={cn(
+                          "size-[7px] rounded-full",
+                          status.tone === "pass" && "bg-pass",
+                          status.tone === "warn" && "bg-warn",
+                          status.tone === "muted" && "bg-muted-foreground",
+                        )}
                       />
-                    </Link>
-                  ) : (
-                    <span className="text-[12.5px] text-muted-foreground">—</span>
-                  )}
-                </div>
+                      {status.label}
+                    </span>
+                  </div>
 
-                <div className="flex justify-end">
-                  {a.suite ? (
+                  <div className="flex justify-end">
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      asChild
-                      aria-label={`Open suite ${a.suite}`}
+                      disabled={!canDelete || deleting === a.suite}
+                      aria-label={`Delete ${name}`}
+                      onClick={() => void removeAgent(a)}
                     >
-                      <Link to={`/suites/${encodeURIComponent(a.suite)}`}>
-                        <ArrowUpRight className="size-4 text-muted-foreground" />
-                      </Link>
+                      <Trash2 className="size-4 text-muted-foreground" />
                     </Button>
-                  ) : (
-                    <span className="text-[12.5px] text-muted-foreground">—</span>
-                  )}
+                  </div>
                 </div>
-              </div>
-            );
-          })
-        )}
+              );
+            })
+          )}
         </div>
       </div>
+
+      <ConnectAgentDialog
+        open={connectOpen}
+        onOpenChange={setConnectOpen}
+        onConnected={reload}
+      />
     </div>
   );
 }

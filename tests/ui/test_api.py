@@ -108,6 +108,25 @@ def test_update_suite_rejects_invalid_name(client: TestClient) -> None:
     assert res.status_code == 400
 
 
+def test_update_suite_title(client: TestClient, tmp_path: Path) -> None:
+    res = client.put("/api/suites/default", json={"title": "Booking bot checks"})
+    assert res.status_code == 200, res.text
+    assert res.json()["title"] == "Booking bot checks"
+    on_disk = load_suite(tmp_path / ".wiretap" / "suites" / "default.yaml")
+    assert on_disk.title == "Booking bot checks"
+
+
+def test_delete_suite(client: TestClient, tmp_path: Path) -> None:
+    path = tmp_path / ".wiretap" / "suites" / "default.yaml"
+    assert path.is_file()
+    res = client.delete("/api/suites/default")
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "default"
+    assert not path.exists()
+    missing = client.get("/api/suites/default")
+    assert missing.status_code == 404
+
+
 def test_simulations_list_and_get(client: TestClient, tmp_path: Path) -> None:
     art = SimulationArtifact(
         suite_id="default",
