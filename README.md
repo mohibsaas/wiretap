@@ -5,7 +5,7 @@
 
 **Website:** [wiretap-website.vercel.app](https://wiretap-website.vercel.app/)
 
-[![Wiretap demo](docs/demo.jpg)](https://youtu.be/-lqZwtQXGls)
+[![Wiretap demo](docs/demo.gif)](https://youtu.be/-lqZwtQXGls)
 
 You built an AI that talks to customers. You called it a few times. It seemed fine. That is not a real test.
 Wiretap is a CLI-first, local-first voice agent test simulator. It does not rebuild or run your agent locally. Instead, it dials your live deployed voice agent (Retell, Vapi, ElevenLabs, LiveKit, Synthflow, or any phone number via Twilio PSTN) with its own LLM-driven test caller, records the conversation, and scores it with deterministic rules + an LLM judge.
