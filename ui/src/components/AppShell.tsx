@@ -149,7 +149,7 @@ export function AppShell() {
           <img
             src="/wiretap-wordmark.png"
             alt="Wiretap"
-            className="h-6 w-auto max-w-full select-none"
+            className="h-7 w-auto max-w-full select-none"
             draggable={false}
           />
         </div>

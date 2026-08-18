@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/brand/logo-wordmark.png" alt="Wiretap" width="280">
+</p>
+
 # Wiretap
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -52,7 +56,21 @@ Paid tools charge hundreds a month for this. Hamming is about $500/mo. This is a
 
 ---
 
-**Contents:** [What it is](#what-it-is) · [Why use it](#why-use-it) · [Why choose wiretap](#why-choose-wiretap) · [What it's not](#what-its-not) · [What wiretap can do](#what-wiretap-can-do) · [Who it's for](#who-its-for) · [How wiretap compares](#how-wiretap-compares) · [Setup for non-technical users](#setup-for-non-technical-users) · [Quick setup for developers](#quick-setup-for-developers) · [Commands](#commands) · [Platforms](#platforms) · [How scoring works](#how-scoring-works) · [Contributing](#contributing)
+**Contents:**
+
+1. [What it is](#what-it-is)
+2. [Why use it](#why-use-it)
+3. [Why choose wiretap](#why-choose-wiretap)
+4. [What it's not](#what-its-not)
+5. [What wiretap can do](#what-wiretap-can-do)
+6. [Who it's for](#who-its-for)
+7. [How wiretap compares](#how-wiretap-compares)
+8. [Setup for non-technical users](#setup-for-non-technical-users)
+9. [Quick setup for developers](#quick-setup-for-developers)
+10. [Commands](#commands)
+11. [Platforms](#platforms)
+12. [How scoring works](#how-scoring-works)
+13. [Contributing](#contributing)
 
 ---
 
